@@ -1,0 +1,12 @@
+{
+  "name": "collectionviewer",
+  "version": "1.0.0",
+  "description": "A dynamic 3D trading card effect that uses AI-generated depth maps from videos, controlled by device accelerometer and touch interactions.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

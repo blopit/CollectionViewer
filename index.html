@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>3D Collection Viewer</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>��</text></svg>">
+  <link rel="stylesheet" href="css/styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    body, html { margin: 0; padding: 0; overflow: hidden; touch-action: none; }
+    canvas { display: block; }
+
+    #controls {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.5);
+      color: white;
+      padding: 10px;
+      border-radius: 5px;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      z-index: 100;
+      transition: all 0.3s ease;
+    }
+
+    #controls.minimized {
+      padding: 5px;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    #controls.minimized h3 {
+      margin: 0;
+      font-size: 10px;
+      text-align: center;
+    }
+
+    #controls button {
+      background: #4CAF50;
+      border: none;
+      color: white;
+      padding: 5px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      margin-top: 5px;
+      display: block;
+      width: 100%;
+    }
+
+    #controls label {
+      display: block;
+      margin-top: 5px;
+    }
+
+    #controls input[type="range"] {
+      width: 100%;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* Message for initial tap */
+    #tap-message {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 15px 20px;
+      border-radius: 5px;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      pointer-events: none;
+      z-index: 200;
+    }
+
+    /* Error message */
+    #error-message {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(255, 0, 0, 0.7);
+      color: white;
+      padding: 20px;
+      border-radius: 5px;
+      font-family: Arial, sans-serif;
+      max-width: 80%;
+      text-align: center;
+      z-index: 300;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="canvas-container">
+      <canvas id="canvas"></canvas>
+      <div class="loading-screen" id="loading-screen">
+        <div class="spinner"></div>
+        <p>Loading your collection...</p>
+      </div>
+    </div>
+
+    <div class="controls-panel visible" id="controls-panel">
+      <button id="toggle-controls" class="toggle-button">
+        <span class="line"></span>
+        <span class="line"></span>
+        <span class="line"></span>
+      </button>
+
+      <div class="controls-content" id="controls-content">
+        <h2>Effect Controls</h2>
+
+        <div class="control-group">
+          <div class="control-header">
+            <h3>Depth Effect</h3>
+            <label class="switch">
+              <input type="checkbox" id="toggle-depth" checked>
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="control-row">
+            <label for="effect-strength">Effect Strength</label>
+            <div class="slider-container">
+              <input type="range" id="effect-strength" min="0" max="0.5" step="0.01" value="0.1">
+              <span class="value-display" id="effect-strength-value">0.10</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="shine-strength">Shine Strength</label>
+            <div class="slider-container">
+              <input type="range" id="shine-strength" min="0" max="2" step="0.05" value="0.4">
+              <span class="value-display" id="shine-strength-value">0.40</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="depth-contrast">Depth Contrast</label>
+            <div class="slider-container">
+              <input type="range" id="depth-contrast" min="0.5" max="5" step="0.1" value="1.5">
+              <span class="value-display" id="depth-contrast-value">1.50</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="depth-smoothing">Depth Smoothing</label>
+            <div class="slider-container">
+              <input type="range" id="depth-smoothing" min="0" max="2" step="0.1" value="0.5">
+              <span class="value-display" id="depth-smoothing-value">0.50</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <h3>Shine Effects</h3>
+          </div>
+
+          <div class="control-row">
+            <label for="specular-strength">Specular Strength</label>
+            <div class="slider-container">
+              <input type="range" id="specular-strength" min="0" max="3" step="0.05" value="0.5">
+              <span class="value-display" id="specular-strength-value">0.50</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="specular-shininess">Shininess</label>
+            <div class="slider-container">
+              <input type="range" id="specular-shininess" min="1" max="200" step="1" value="30">
+              <span class="value-display" id="specular-shininess-value">30</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <h3>Strategic Lighting</h3>
+          </div>
+
+          <div class="control-row">
+            <label for="light-top-left">Top Left Light</label>
+            <div class="slider-container">
+              <input type="range" id="light-top-left" min="0" max="2" step="0.05" value="0.5">
+              <span class="value-display" id="light-top-left-value">0.50</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="light-top-right">Top Right Light</label>
+            <div class="slider-container">
+              <input type="range" id="light-top-right" min="0" max="2" step="0.05" value="0.3">
+              <span class="value-display" id="light-top-right-value">0.30</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="light-bottom-left">Bottom Left Light</label>
+            <div class="slider-container">
+              <input type="range" id="light-bottom-left" min="0" max="2" step="0.05" value="0.2">
+              <span class="value-display" id="light-bottom-left-value">0.20</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="light-bottom-right">Bottom Right Light</label>
+            <div class="slider-container">
+              <input type="range" id="light-bottom-right" min="0" max="2" step="0.05" value="0.1">
+              <span class="value-display" id="light-bottom-right-value">0.10</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="vignette-strength">Vignette Strength</label>
+            <div class="slider-container">
+              <input type="range" id="vignette-strength" min="0" max="5" step="0.1" value="1.5">
+              <span class="value-display" id="vignette-strength-value">1.50</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <h3>Debug Options</h3>
+          </div>
+
+          <div class="control-row">
+            <label for="show-depth-map">Show Depth Map</label>
+            <label class="switch">
+              <input type="checkbox" id="show-depth-map">
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="control-row">
+            <label for="invert-depth">Invert Depth</label>
+            <label class="switch">
+              <input type="checkbox" id="invert-depth">
+              <span class="slider round"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="footer-note">
+          <p>Move your device or hover with your mouse to see the 3D effect.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tap-message">Tap screen to play video</div>
+
+  <script src="js/app.js" type="module"></script>
+</body>
+</html>

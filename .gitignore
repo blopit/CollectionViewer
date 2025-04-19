@@ -135,6 +135,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+depthify_env/
 
 # Spyder project settings
 .spyderproject
@@ -172,3 +173,20 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# macOS system files
+.DS_Store
+
+# Video files - too large for git
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+videos/
+# Keep a placeholder file in the videos directory
+!videos/.gitkeep
+
+# Node.js dependencies
+node_modules/
+package-lock.json
