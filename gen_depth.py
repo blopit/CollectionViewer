@@ -204,12 +204,12 @@ def main():
     args.output = os.path.join('videos', 'depth', output_filename)
     
     # Create temporary directory
-temp_dir = tempfile.mkdtemp()
-frames_dir = os.path.join(temp_dir, "frames")
-depth_dir = os.path.join(temp_dir, "depth")
+    temp_dir = tempfile.mkdtemp()
+    frames_dir = os.path.join(temp_dir, "frames")
+    depth_dir = os.path.join(temp_dir, "depth")
 
-os.makedirs(frames_dir, exist_ok=True)
-os.makedirs(depth_dir, exist_ok=True)
+    os.makedirs(frames_dir, exist_ok=True)
+    os.makedirs(depth_dir, exist_ok=True)
 
     try:
         # Step 1: Load model
@@ -218,16 +218,16 @@ os.makedirs(depth_dir, exist_ok=True)
                      message="Loading MiDaS model...",
                      extra_info={"device": "GPU" if torch.cuda.is_available() else "CPU"})
         
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
-    model.to(device)
-    model.eval()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
+        model.to(device)
+        model.eval()
 
         # Define transformation
         transform = Compose([
-        Resize((256, 256)),
-        ToTensor(),
-        Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            Resize((256, 256)),
+            ToTensor(),
+            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
         
         # Step 2: Extract frames
@@ -236,13 +236,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                      message="Reading video information...")
         
         cap = cv2.VideoCapture(video_path)
-if not cap.isOpened():
+        if not cap.isOpened():
             raise Exception(f"Could not open video: {video_path}")
 
-fps = cap.get(cv2.CAP_PROP_FPS)
-frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         # Update with video info
         update_status(args.status_file, "extracting_frames",
@@ -254,14 +254,15 @@ height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                          "frames_processed": 0
                      })
 
-frame_idx = 0
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+        frame_idx = 0
+        start_time = time.time()
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    frame_path = os.path.join(frames_dir, f"frame_{frame_idx:06d}.jpg")
-    cv2.imwrite(frame_path, frame)
+            frame_path = os.path.join(frames_dir, f"frame_{frame_idx:06d}.jpg")
+            cv2.imwrite(frame_path, frame)
 
             if frame_idx % 5 == 0:  # Update more frequently
                 progress = int((frame_idx / frame_count) * 30)  # 0-30% progress
@@ -272,19 +273,19 @@ while True:
                                 "frames_processed": frame_idx,
                                 "total_frames": frame_count,
                                 "video_info": f"{width}x{height} @ {fps}fps",
-                                "current_fps": round(frame_idx / (time.time() - start_time), 1) if 'start_time' in locals() else 0
+                                "current_fps": round(frame_idx / (time.time() - start_time), 1)
                             })
 
-    frame_idx += 1
+            frame_idx += 1
 
-cap.release()
+        cap.release()
 
         # Step 3: Process frames
-frame_files = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
-total_frames = len(frame_files)
+        frame_files = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
+        total_frames = len(frame_files)
         processing_start_time = time.time()
 
-for i, frame_path in enumerate(frame_files):
+        for i, frame_path in enumerate(frame_files):
             if i % 2 == 0:  # Update every other frame
                 progress = 30 + int((i / total_frames) * 60)  # 30-90% progress
                 current_fps = round(i / (time.time() - processing_start_time), 1) if i > 0 else 0
@@ -309,25 +310,25 @@ for i, frame_path in enumerate(frame_files):
                                 "eta_human": f"{eta_seconds // 60}m {eta_seconds % 60}s"
                             })
             
-            # Process frame (existing code)
-    img = Image.open(frame_path).convert("RGB")
-    input_batch = transform(img).unsqueeze(0).to(device)
+            # Process frame
+            img = Image.open(frame_path).convert("RGB")
+            input_batch = transform(img).unsqueeze(0).to(device)
 
-    with torch.no_grad():
-        prediction = model(input_batch)
-        prediction = torch.nn.functional.interpolate(
-            prediction.unsqueeze(1),
-            size=(height, width),
-            mode="bicubic",
-            align_corners=False,
-        ).squeeze()
+            with torch.no_grad():
+                prediction = model(input_batch)
+                prediction = torch.nn.functional.interpolate(
+                    prediction.unsqueeze(1),
+                    size=(height, width),
+                    mode="bicubic",
+                    align_corners=False,
+                ).squeeze()
 
-    output = prediction.cpu().numpy()
-    output = (255 * (output - output.min()) / (output.max() - output.min())).astype(np.uint8)
+            output = prediction.cpu().numpy()
+            output = (255 * (output - output.min()) / (output.max() - output.min())).astype(np.uint8)
 
-    depth_path = os.path.join(depth_dir, os.path.basename(frame_path))
-    depth_image = Image.fromarray(output)
-    depth_image.save(depth_path)
+            depth_path = os.path.join(depth_dir, os.path.basename(frame_path))
+            depth_image = Image.fromarray(output)
+            depth_image.save(depth_path)
 
         # Step 4: Create final video
         update_status(args.status_file, "creating_video", 
@@ -388,7 +389,7 @@ for i, frame_path in enumerate(frame_files):
         
     finally:
         # Clean up
-shutil.rmtree(temp_dir)
+        shutil.rmtree(temp_dir)
 
 if __name__ == "__main__":
     main()
