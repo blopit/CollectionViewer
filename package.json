@@ -4,7 +4,15 @@
   "description": "A dynamic 3D trading card effect that uses AI-generated depth maps from videos, controlled by device accelerometer and touch interactions.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "canvas-sketch canvas-sketch-3d.js --open"
+  },
+  "dependencies": {
+    "canvas-sketch": "^0.7.7",
+    "canvas-sketch-cli": "^1.11.20",
+    "dat.gui": "^0.7.9",
+    "stats-js": "^1.0.1",
+    "three": "^0.137.5"
   },
   "keywords": [],
   "author": "",

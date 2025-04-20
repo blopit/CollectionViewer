@@ -363,4 +363,54 @@ input:checked + .slider:before {
     .toggle-button .line {
         width: 20px;
     }
+}
+
+/* Upload Component Styles */
+.upload-container {
+  margin-bottom: 20px;
+  padding: 15px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.upload-input {
+  width: 0.1px;
+  height: 0.1px;
+  opacity: 0;
+  overflow: hidden;
+  position: absolute;
+  z-index: -1;
+}
+
+.upload-button {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  background: #4d9fff;
+  color: white;
+  text-align: center;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  font-size: 14px;
+}
+
+.upload-button:hover {
+  background: #83beff;
+}
+
+.progress-bar {
+  width: 0%;
+  height: 4px;
+  background: #4d9fff;
+  border-radius: 2px;
+  margin-top: 10px;
+  transition: width 0.3s ease;
+}
+
+.status-text {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  text-align: center;
 } 

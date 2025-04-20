@@ -12,6 +12,11 @@
 import * as THREE from 'https://unpkg.com/three@0.175.0/build/three.module.js';
 // Import GSAP for animations
 import { gsap } from 'https://cdn.skypack.dev/gsap';
+// Import VideoUploader
+import { VideoUploader } from './upload.js';
+
+// Initialize video uploader
+const videoUploader = new VideoUploader();
 
 // Global state
 let scene;
@@ -21,6 +26,7 @@ let videoTexture;
 let depthTexture;
 let card;
 let backgroundPlane; // Background plane showing original video
+let animationFrameId; // Store animation frame ID for cleanup
 const accelerometer = { x: 0, y: 0 };
 const touchStartTime = 0;
 let isCardRevealed = false;
@@ -37,6 +43,9 @@ let depthInverted = false; // Flag to track if depth map is inverted
 
 // Local storage key for saving settings
 const STORAGE_KEY = 'collectionViewerSettings';
+
+// Add cursor position tracking
+const cursorPosition = { x: 0.5, y: 0.5 };
 
 /**
  * Saves the current settings to localStorage
@@ -79,7 +88,7 @@ function loadSettings() {
 // Effect parameters
 const params = {
   // Basic effect parameters
-  effectStrength: 0.5,     // Increased for more pronounced 3D effect
+  effectStrength: 1.0,     // Increased max effect strength
   shineStrength: 0.6,      // Increased for more dramatic shine
   depthContrast: 2.0,      // Increased for better depth definition
   perspective: 0.5,        // Increased for more dramatic perspective
@@ -87,6 +96,16 @@ const params = {
   zoom: 1.3,               // Default zoom level (camera position z)
   backgroundDistance: 0.3, // Increased distance between card and background plane
   depthThreshold: 0.5,     // Threshold for depth effect intensity
+
+  // Clear coat parameters
+  clearCoat: 1.0,
+  clearCoatRoughness: 0.1,
+  clearCoatNormalScale: 0.3,
+
+  // New cursor light parameters
+  cursorLightStrength: 0.8,    // Strength of cursor light
+  cursorLightRadius: 0.2,      // Radius of cursor light effect
+  cursorLightColor: [1.0, 0.8, 0.6], // Warm light color
 
   // New shine effect parameters
   specularStrength: 0.8,   // Increased strength of specular highlights
@@ -122,12 +141,9 @@ function init() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
 
-  // Create video element for texture
-  const video = document.createElement('video');
-  video.src = 'videos/video.mp4'; // Back to using the original video
-  video.loop = true;
-  video.muted = true;
-  video.playsInline = true;
+  // Get video elements from DOM
+  const video = document.getElementById('original-video');
+  const depthVideo = document.getElementById('depth-video');
 
   // Create video texture
   videoTexture = new THREE.VideoTexture(video);
@@ -135,93 +151,51 @@ function init() {
   videoTexture.magFilter = THREE.LinearFilter;
   videoTexture.format = THREE.RGBFormat;
 
-  // Create depth video and texture
-  const depthVideo = document.createElement('video');
-  depthVideo.src = 'videos/depth_video.mp4'; // Back to using the original depth video
-  depthVideo.loop = true;
-  depthVideo.muted = true;
-  depthVideo.playsInline = true;
-
-  // Set higher quality for the depth video if possible
-  depthVideo.setAttribute('playsinline', '');
-  depthVideo.setAttribute('webkit-playsinline', '');
-  depthVideo.setAttribute('preload', 'auto');
-  depthVideo.setAttribute('poster', '');  // Empty poster for faster start
-
+  // Create depth texture
   depthTexture = new THREE.VideoTexture(depthVideo);
   depthTexture.minFilter = THREE.LinearFilter;
   depthTexture.magFilter = THREE.LinearFilter;
   depthTexture.format = THREE.RGBFormat;
   depthTexture.generateMipmaps = false; // Disable mipmaps for sharper details
-  depthTexture.anisotropy = renderer.capabilities.getMaxAnisotropy(); // Maximum anisotropic filtering
+  depthTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   // Ensure synchronization of both videos
   video.addEventListener('play', () => {
-    // Sync the depth video to match the main video's timing
     depthVideo.currentTime = video.currentTime;
   });
 
   video.addEventListener('seeked', () => {
-    // Keep depth video in sync when main video seeks
     depthVideo.currentTime = video.currentTime;
   });
 
   // Wait for both videos to be ready and calculate aspect ratio
   Promise.all([
     new Promise(resolve => {
-      video.addEventListener('canplaythrough', () => {
+      if (video.readyState >= 2) {
         resolve(video);
-      }, { once: true });
-      video.load();
+      } else {
+        video.addEventListener('canplay', () => resolve(video), { once: true });
+      }
     }),
     new Promise(resolve => {
-      depthVideo.addEventListener('canplaythrough', () => {
+      if (depthVideo.readyState >= 2) {
         resolve(depthVideo);
-      }, { once: true });
-      depthVideo.load();
+      } else {
+        depthVideo.addEventListener('canplay', () => resolve(depthVideo), { once: true });
+      }
     })
-  ]).then(([mainVideo, depthVideo]) => {
-    // Calculate aspect ratio from actual video dimensions
-    const videoWidth = mainVideo.videoWidth;
-    const videoHeight = mainVideo.videoHeight;
-    const aspectRatio = videoWidth / videoHeight;
-
-    console.log(`Video dimensions: ${videoWidth}x${videoHeight}, aspect ratio: ${aspectRatio}`);
-
-    // Create card with dynamic aspect ratio
+  ]).then(([video, depthVideo]) => {
+    const aspectRatio = video.videoWidth / video.videoHeight;
     createCard(aspectRatio);
 
-    // Hide tap message once videos are ready
-    document.getElementById('tap-message').style.display = 'block';
+    // Start videos if they're not already playing
+    if (video.paused) video.play().catch(console.error);
+    if (depthVideo.paused) depthVideo.play().catch(console.error);
 
-    // Play videos on first user interaction
-    const playVideos = () => {
-      Promise.all([
-        mainVideo.play(),
-        depthVideo.play()
-      ]).then(() => {
-        document.getElementById('tap-message').style.display = 'none';
-        // Only try to reveal card if it exists and hasn't been revealed yet
-        if (card && !isCardRevealed) {
-          revealCard();
-        }
-      }).catch(error => {
-        console.error('Error playing videos:', error);
-        const errorMessage = document.createElement('div');
-        errorMessage.id = 'error-message';
-        errorMessage.textContent = `Error playing videos: ${error.message}. Please try refreshing the page.`;
-        document.body.appendChild(errorMessage);
-      });
-    };
-
-    document.addEventListener('click', playVideos, { once: true });
-    document.addEventListener('touchstart', playVideos, { once: true });
+    // Start animation loop
+    animate();
   }).catch(error => {
     console.error('Error loading videos:', error);
-    const errorMessage = document.createElement('div');
-    errorMessage.id = 'error-message';
-    errorMessage.textContent = `Error loading videos: ${error.message}`;
-    document.body.appendChild(errorMessage);
   });
 
   // Add window resize handler
@@ -290,9 +264,6 @@ function init() {
 
   // Setup controls
   setupControls();
-
-  // Start animation loop
-  animate();
 }
 
 /**
@@ -336,7 +307,18 @@ function createCard(aspectRatio) {
       lightTopRight: { value: params.lightTopRight },
       lightBottomLeft: { value: params.lightBottomLeft },
       lightBottomRight: { value: params.lightBottomRight },
-      vignetteStrength: { value: params.vignetteStrength }
+      vignetteStrength: { value: params.vignetteStrength },
+
+      // Add cursor light uniforms
+      cursorPos: { value: new THREE.Vector2(0.5, 0.5) },
+      cursorLightStrength: { value: params.cursorLightStrength },
+      cursorLightRadius: { value: params.cursorLightRadius },
+      cursorLightColor: { value: new THREE.Vector3(...params.cursorLightColor) },
+
+      // Add clear coat uniforms
+      clearCoat: { value: params.clearCoat },
+      clearCoatRoughness: { value: params.clearCoatRoughness },
+      clearCoatNormalScale: { value: params.clearCoatNormalScale }
     },
     vertexShader: `
       varying vec2 vUv;
@@ -468,6 +450,17 @@ function createCard(aspectRatio) {
       uniform float lightBottomRight;
       uniform float vignetteStrength;
 
+      // Add cursor light uniforms
+      uniform vec2 cursorPos;
+      uniform float cursorLightStrength;
+      uniform float cursorLightRadius;
+      uniform vec3 cursorLightColor;
+
+      // Add clear coat uniforms
+      uniform float clearCoat;
+      uniform float clearCoatRoughness;
+      uniform float clearCoatNormalScale;
+
       // Improved smootherstep for better transitions
       float smootherstep(float edge0, float edge1, float x) {
         x = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
@@ -590,6 +583,35 @@ function createCard(aspectRatio) {
           finalColor *= mix(1.0, vig, effectIntensity);
         }
 
+        if (showDepthMap < 0.5 && showForeground < 0.5) {
+          // Calculate distance from cursor
+          float cursorDist = distance(vUv, cursorPos);
+          
+          // Create smooth falloff for cursor light
+          float cursorLight = smoothstep(cursorLightRadius, 0.0, cursorDist);
+          
+          // Add cursor light to final color
+          finalColor += cursorLightColor * cursorLight * cursorLightStrength * foregroundMask;
+
+          // Apply clear coat effect
+          vec3 clearCoatNormal = normalize(vNormal);
+          float clearCoatFresnel = pow(1.0 - abs(dot(clearCoatNormal, viewDir)), 5.0);
+          
+          // Calculate clear coat reflection
+          vec3 clearCoatReflection = reflect(-viewDir, clearCoatNormal);
+          float clearCoatSpecular = pow(max(dot(clearCoatReflection, normalize(vec3(1.0, 1.0, 1.0))), 0.0), 
+                                     mix(128.0, 1.0, clearCoatRoughness));
+          
+          // Apply clear coat layer
+          vec3 clearCoatColor = vec3(1.0);
+          float clearCoatStrength = clearCoat * clearCoatFresnel;
+          finalColor = mix(finalColor, clearCoatColor, clearCoatStrength * clearCoatSpecular);
+          
+          // Add clear coat normal mapping effect
+          float clearCoatNormalFactor = clearCoatNormalScale * clearCoatStrength;
+          finalColor += clearCoatColor * clearCoatNormalFactor * clearCoatSpecular;
+        }
+
         gl_FragColor = vec4(finalColor, texColor.a);
       }
     `,
@@ -598,9 +620,6 @@ function createCard(aspectRatio) {
 
   // Create card mesh
   card = new THREE.Mesh(cardGeometry, cardMaterial);
-
-  // Add subtle ambient rotation for more 3D feel
-  card.rotation.x = 0.05;
 
   // Position the card slightly forward
   card.position.z = params.backgroundDistance;
@@ -622,10 +641,6 @@ function createCard(aspectRatio) {
   // Position the background plane at a fixed distance behind the card
   // Use a negative z value to ensure it's always behind the card
   backgroundPlane.position.z = -0.05;
-
-  // Ensure the background plane stays perfectly flat
-  backgroundPlane.rotation.x = 0;
-  backgroundPlane.rotation.y = 0;
 
   // Add both meshes to scene
   scene.add(backgroundPlane);
@@ -762,7 +777,10 @@ let time = 0;
  * Updates time-based effects and handles card rotation
  */
 function animate() {
-  requestAnimationFrame(animate);
+  if (card?.material?.uniforms) {
+    card.material.uniforms.cursorPos.value.set(cursorPosition.x, cursorPosition.y);
+  }
+  animationFrameId = requestAnimationFrame(animate);
 
   time += 0.01;
 
@@ -781,32 +799,16 @@ function animate() {
     targetRotation.y = idleY;
   }
 
-  // Smooth rotation transition for card
-  if (card) {
-    gsap.to(card.rotation, {
+  // Smooth rotation transition for both card and background
+  if (card && backgroundPlane) {
+    // Update both planes with the same rotation
+    gsap.to([card.rotation, backgroundPlane.rotation], {
       x: targetRotation.x,
       y: targetRotation.y,
       duration: 0.3,
       overwrite: true,
       ease: "power2.out"
     });
-  }
-
-  // Keep the background plane parallel to the card
-  if (backgroundPlane && card) {
-    // Make background plane tilt in parallel with the card
-    // This ensures both planes maintain the same orientation when tilting
-    gsap.to(backgroundPlane.rotation, {
-      x: targetRotation.x,
-      y: targetRotation.y,
-      duration: 0.3,
-      overwrite: true,
-      ease: "power2.out"
-    });
-
-    // Keep background plane at a fixed distance behind the card
-    // Maintain z position to ensure proper layering
-    backgroundPlane.position.z = -0.05;
   }
 
   renderer.render(scene, camera);
@@ -827,16 +829,16 @@ function setupControls() {
     // Apply saved parameters
     if (savedSettings.params) {
       // Update each parameter, preserving any that might not be in saved settings
-      Object.keys(savedSettings.params).forEach(key => {
-        if (params.hasOwnProperty(key)) {
+      for (const key of Object.keys(savedSettings.params)) {
+        if (Object.prototype.hasOwnProperty.call(params, key)) {
           // Special handling for specularColor which is an array
-          if (key === 'specularColor' && Array.isArray(savedSettings.params[key])) {
+          if (key === 'specularColor') {
             params[key] = savedSettings.params[key];
-          } else if (typeof savedSettings.params[key] === 'number') {
+          } else {
             params[key] = savedSettings.params[key];
           }
         }
-      });
+      }
     }
 
     // Apply saved toggle states
@@ -868,11 +870,11 @@ function setupControls() {
     // Update shader uniforms if card exists
     if (card?.material?.uniforms) {
       // Update all numeric uniforms
-      Object.keys(params).forEach(key => {
+      for (const key in params) {
         if (card.material.uniforms[key] && typeof params[key] === 'number') {
           card.material.uniforms[key].value = params[key];
         }
-      });
+      }
 
       // Update toggle uniforms
       card.material.uniforms.showDepth.value = isShowingDepth ? 1.0 : 0.0;
@@ -909,7 +911,12 @@ function setupControls() {
       { id: 'light-top-right', value: params.lightTopRight, displayId: 'light-top-right-value' },
       { id: 'light-bottom-left', value: params.lightBottomLeft, displayId: 'light-bottom-left-value' },
       { id: 'light-bottom-right', value: params.lightBottomRight, displayId: 'light-bottom-right-value' },
-      { id: 'vignette-strength', value: params.vignetteStrength, displayId: 'vignette-strength-value' }
+      { id: 'vignette-strength', value: params.vignetteStrength, displayId: 'vignette-strength-value' },
+      { id: 'cursor-light-strength', value: params.cursorLightStrength, displayId: 'cursor-light-strength-value' },
+      { id: 'cursor-light-radius', value: params.cursorLightRadius, displayId: 'cursor-light-radius-value' },
+      { id: 'clear-coat', value: params.clearCoat, displayId: 'clear-coat-value' },
+      { id: 'clear-coat-roughness', value: params.clearCoatRoughness, displayId: 'clear-coat-roughness-value' },
+      { id: 'clear-coat-normal-scale', value: params.clearCoatNormalScale, displayId: 'clear-coat-normal-scale-value' }
     ];
 
     sliderConfigs.forEach(config => {
@@ -1166,6 +1173,10 @@ function setupControls() {
   createSliderListener('light-bottom-right', 'lightBottomRight');
   createSliderListener('vignette-strength', 'vignetteStrength');
 
+  // Add cursor light controls
+  createSliderListener('cursor-light-strength', 'cursorLightStrength');
+  createSliderListener('cursor-light-radius', 'cursorLightRadius');
+
   // Support old controls as well
   document.querySelector('#controls #toggle-depth')?.addEventListener('click', () => {
     isShowingDepth = !isShowingDepth;
@@ -1219,5 +1230,68 @@ function setupControls() {
   }
 }
 
-// Initialize
+/**
+ * Cleanup function to properly dispose of Three.js resources
+ */
+function cleanup() {
+  // Stop animation loop
+  if (window.cancelAnimationFrame) {
+    window.cancelAnimationFrame(animationFrameId);
+  }
+  
+  // Dispose of Three.js resources
+  if (scene) {
+    // Remove and dispose of card mesh
+    if (card) {
+      scene.remove(card);
+      card.geometry.dispose();
+      card.material.dispose();
+    }
+    
+    // Remove and dispose of background plane
+    if (backgroundPlane) {
+      scene.remove(backgroundPlane);
+      backgroundPlane.geometry.dispose();
+      backgroundPlane.material.dispose();
+    }
+    
+    // Dispose of textures
+    if (videoTexture) {
+      videoTexture.dispose();
+    }
+    if (depthTexture) {
+      depthTexture.dispose();
+    }
+  }
+  
+  // Clear references
+  scene = null;
+  camera = null;
+  renderer = null;
+  videoTexture = null;
+  depthTexture = null;
+  card = null;
+  backgroundPlane = null;
+}
+
+// Expose init and cleanup functions globally
+window.init = init;
+window.cleanup = cleanup;
+
+// Initialize on load
 init();
+
+// Track cursor position
+function updateCursorPosition(event) {
+  cursorPosition.x = event.clientX / window.innerWidth;
+  cursorPosition.y = 1.0 - (event.clientY / window.innerHeight); // Invert Y for WebGL coordinates
+}
+
+// Add event listeners for cursor tracking
+window.addEventListener('mousemove', updateCursorPosition);
+window.addEventListener('touchmove', (e) => {
+  updateCursorPosition({
+    clientX: e.touches[0].clientX,
+    clientY: e.touches[0].clientY
+  });
+});
