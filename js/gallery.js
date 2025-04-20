@@ -267,30 +267,53 @@ export class VideoGallery {
     
     // Update video sources
     if (originalVideo) {
+      originalVideo.pause();  // Pause any existing playback
+      originalVideo.currentTime = 0;  // Reset to beginning
       originalVideo.src = video.original_url;
       originalVideo.load();
-      originalVideo.play().catch(console.error);
     }
     
     if (depthVideo) {
+      depthVideo.pause();  // Pause any existing playback
+      depthVideo.currentTime = 0;  // Reset to beginning
       depthVideo.src = video.depth_url;
       depthVideo.load();
-      depthVideo.play().catch(console.error);
     }
 
     // Hide gallery and show controls
     this.hide();
     document.querySelector('.upload-container').style.display = 'none';
 
-    // Reinitialize the 3D effect
-    setTimeout(() => {
-      if (window.init) {
-        if (window.cleanup) {
-          window.cleanup();
+    // Clean up existing 3D effect before reinitializing
+    if (window.cleanup) {
+      window.cleanup();
+    }
+
+    // Wait for both videos to be ready before initializing 3D effect
+    Promise.all([
+      new Promise(resolve => {
+        if (originalVideo.readyState >= 2) {
+          resolve();
+        } else {
+          originalVideo.addEventListener('canplay', resolve, { once: true });
         }
+      }),
+      new Promise(resolve => {
+        if (depthVideo.readyState >= 2) {
+          resolve();
+        } else {
+          depthVideo.addEventListener('canplay', resolve, { once: true });
+        }
+      })
+    ]).then(() => {
+      // Initialize 3D effect
+      if (window.init) {
         window.init();
       }
-    }, 100);
+      // Start playback
+      originalVideo.play().catch(console.error);
+      depthVideo.play().catch(console.error);
+    }).catch(console.error);
   }
 
   show() {

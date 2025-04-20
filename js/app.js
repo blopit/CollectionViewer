@@ -121,10 +121,58 @@ const params = {
 };
 
 /**
+ * Cleanup function to remove all 3D elements and dispose of resources
+ */
+function cleanup() {
+  // Cancel any existing animation frame
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
+
+  // Dispose of Three.js resources
+  if (scene) {
+    // Remove and dispose of card mesh
+    if (card) {
+      scene.remove(card);
+      card.geometry.dispose();
+      card.material.dispose();
+    }
+    
+    // Remove and dispose of background plane
+    if (backgroundPlane) {
+      scene.remove(backgroundPlane);
+      backgroundPlane.geometry.dispose();
+      backgroundPlane.material.dispose();
+    }
+    
+    // Dispose of textures
+    if (videoTexture) {
+      videoTexture.dispose();
+    }
+    if (depthTexture) {
+      depthTexture.dispose();
+    }
+  }
+  
+  // Clear references
+  scene = null;
+  camera = null;
+  renderer = null;
+  videoTexture = null;
+  depthTexture = null;
+  card = null;
+  backgroundPlane = null;
+}
+
+/**
  * Initialize the Three.js scene and set up the 3D environment
  * This is the main entry point for the application
  */
 function init() {
+  // Clean up any existing scene first
+  cleanup();
+
   // Create scene
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
@@ -144,6 +192,10 @@ function init() {
   // Get video elements from DOM
   const video = document.getElementById('original-video');
   const depthVideo = document.getElementById('depth-video');
+
+  // Stop any existing playback
+  video.pause();
+  depthVideo.pause();
 
   // Create video texture
   videoTexture = new THREE.VideoTexture(video);
@@ -1230,57 +1282,6 @@ function setupControls() {
   }
 }
 
-/**
- * Cleanup function to properly dispose of Three.js resources
- */
-function cleanup() {
-  // Stop animation loop
-  if (window.cancelAnimationFrame) {
-    window.cancelAnimationFrame(animationFrameId);
-  }
-  
-  // Dispose of Three.js resources
-  if (scene) {
-    // Remove and dispose of card mesh
-    if (card) {
-      scene.remove(card);
-      card.geometry.dispose();
-      card.material.dispose();
-    }
-    
-    // Remove and dispose of background plane
-    if (backgroundPlane) {
-      scene.remove(backgroundPlane);
-      backgroundPlane.geometry.dispose();
-      backgroundPlane.material.dispose();
-    }
-    
-    // Dispose of textures
-    if (videoTexture) {
-      videoTexture.dispose();
-    }
-    if (depthTexture) {
-      depthTexture.dispose();
-    }
-  }
-  
-  // Clear references
-  scene = null;
-  camera = null;
-  renderer = null;
-  videoTexture = null;
-  depthTexture = null;
-  card = null;
-  backgroundPlane = null;
-}
-
-// Expose init and cleanup functions globally
-window.init = init;
-window.cleanup = cleanup;
-
-// Initialize on load
-init();
-
 // Track cursor position
 function updateCursorPosition(event) {
   cursorPosition.x = event.clientX / window.innerWidth;
@@ -1295,3 +1296,10 @@ window.addEventListener('touchmove', (e) => {
     clientY: e.touches[0].clientY
   });
 });
+
+// Expose init and cleanup functions globally
+window.init = init;
+window.cleanup = cleanup;
+
+// Initialize on load
+init();
