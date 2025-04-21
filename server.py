@@ -88,12 +88,16 @@ def organize_video_files():
 
 class DepthMapHandler(BaseHTTPRequestHandler):
     def _set_headers(self, content_type="application/json"):
-        self.send_response(200)
-        self.send_header("Content-type", content_type)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
+        try:
+            self.send_response(200)
+            self.send_header("Content-type", content_type)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            print("Client disconnected while sending headers")
+            return
 
     def serve_file(self, file_path, content_type=None):
         try:
@@ -105,8 +109,15 @@ class DepthMapHandler(BaseHTTPRequestHandler):
                 if content_type is None:
                     content_type = 'application/octet-stream'
 
-            self._set_headers(content_type)
-            self.wfile.write(content)
+            try:
+                self._set_headers(content_type)
+                self.wfile.write(content)
+            except BrokenPipeError:
+                print(f"Client disconnected while serving {file_path}")
+                return False
+            except ConnectionResetError:
+                print(f"Connection reset while serving {file_path}")
+                return False
             return True
         except Exception as e:
             print(f"Error serving file {file_path}: {str(e)}")
@@ -234,11 +245,17 @@ class DepthMapHandler(BaseHTTPRequestHandler):
             if os.path.exists(file_path) and os.path.isfile(file_path):
                 content_type = mimetypes.guess_type(file_path)[0]
                 if not self.serve_file(file_path, content_type):
+                    try:
+                        self.send_response(404)
+                        self.end_headers()
+                    except (BrokenPipeError, ConnectionResetError):
+                        print(f"Client disconnected while sending 404 for {self.path}")
+            else:
+                try:
                     self.send_response(404)
                     self.end_headers()
-            else:
-                self.send_response(404)
-                self.end_headers()
+                except (BrokenPipeError, ConnectionResetError):
+                    print(f"Client disconnected while sending 404 for {self.path}")
             return
 
         # Serve other static files (CSS, JS)
@@ -246,11 +263,17 @@ class DepthMapHandler(BaseHTTPRequestHandler):
             file_path = self.path[1:]  # Remove leading slash
             if os.path.exists(file_path) and os.path.isfile(file_path):
                 if not self.serve_file(file_path):
+                    try:
+                        self.send_response(404)
+                        self.end_headers()
+                    except (BrokenPipeError, ConnectionResetError):
+                        print(f"Client disconnected while sending 404 for {self.path}")
+            else:
+                try:
                     self.send_response(404)
                     self.end_headers()
-            else:
-                self.send_response(404)
-                self.end_headers()
+                except (BrokenPipeError, ConnectionResetError):
+                    print(f"Client disconnected while sending 404 for {self.path}")
             return
 
         # Default response
@@ -258,104 +281,125 @@ class DepthMapHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"status": "Depth Map Generator Server is running"}).encode())
 
     def do_POST(self):
-        if self.path == "/generate-depth":
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            data = json.loads(post_data.decode('utf-8'))
+        try:
+            if self.path == "/generate-depth":
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                data = json.loads(post_data.decode('utf-8'))
 
-            # Generate a unique ID for this job
-            job_id = str(uuid.uuid4())
+                # Generate a unique ID for this job
+                job_id = str(uuid.uuid4())
 
-            # Decode video data
-            video_data = base64.b64decode(data['video'].split(',')[1])
-            
-            # Check cache first
-            video_hash = get_video_hash(video_data)
-            model_type = data.get('model', 'small')
-            foreground_method = data.get('foreground_method', 'bgsubtract')
-            threshold = data.get('threshold', '0.2')
-            
-            cached_video = get_cached_video(video_hash, model_type, foreground_method, threshold)
-            
-            if cached_video:
-                print(f"Cache hit! Using cached video: {cached_video}")
-                # Copy cached video to output
-                output_path = os.path.join(VIDEOS_DIR, f"{job_id}_depth.mp4")
-                shutil.copy2(cached_video, output_path)
+                # Decode video data
+                video_data = base64.b64decode(data['video'].split(',')[1])
                 
-                # Return immediate completion
-                self._set_headers()
-                self.wfile.write(json.dumps({
-                    "job_id": job_id,
-                    "status": "completed",
-                    "depth_video_url": f"/videos/{job_id}_depth.mp4"
-                }).encode())
-                return
+                # Check cache first
+                video_hash = get_video_hash(video_data)
+                model_type = data.get('model', 'small')
+                foreground_method = data.get('foreground_method', 'bgsubtract')
+                threshold = data.get('threshold', '0.2')
+                
+                cached_video = get_cached_video(video_hash, model_type, foreground_method, threshold)
+                
+                if cached_video:
+                    print(f"Cache hit! Using cached video: {cached_video}")
+                    # Copy cached video to output
+                    output_path = os.path.join(VIDEOS_DIR, f"{job_id}_depth.mp4")
+                    shutil.copy2(cached_video, output_path)
+                    
+                    # Return immediate completion
+                    self._set_headers()
+                    self.wfile.write(json.dumps({
+                        "job_id": job_id,
+                        "status": "completed",
+                        "depth_video_url": f"/videos/{job_id}_depth.mp4"
+                    }).encode())
+                    return
 
-            # No cache hit, process normally
-            input_path = os.path.join(UPLOAD_DIR, f"{job_id}.mp4")
-            output_path = os.path.join(VIDEOS_DIR, f"{job_id}_depth.mp4")
+                # No cache hit, process normally
+                input_path = os.path.join(UPLOAD_DIR, f"{job_id}.mp4")
+                output_path = os.path.join(VIDEOS_DIR, f"{job_id}_depth.mp4")
 
-            with open(input_path, "wb") as f:
-                f.write(video_data)
+                with open(input_path, "wb") as f:
+                    f.write(video_data)
 
-            # Create status file
-            status_data = {
-                "status": "processing",
-                "stage": "initializing",
-                "progress": 0,
-                "total": 100,
-                "message": "Starting video processing..."
-            }
-            with open(os.path.join(UPLOAD_DIR, f"{job_id}.status"), "w") as f:
-                json.dump(status_data, f)
+                # Create status file
+                status_data = {
+                    "status": "processing",
+                    "stage": "initializing",
+                    "progress": 0,
+                    "total": 100,
+                    "message": "Starting video processing..."
+                }
+                with open(os.path.join(UPLOAD_DIR, f"{job_id}.status"), "w") as f:
+                    json.dump(status_data, f)
 
-            # Start depth map generation in a separate process
-            cache_key = f"{video_hash}_{model_type}_{foreground_method}_{threshold}"
-            cache_output = os.path.join(CACHE_DIR, f"{cache_key}.mp4")
+                # Start depth map generation in a separate process
+                cache_key = f"{video_hash}_{model_type}_{foreground_method}_{threshold}"
+                cache_output = os.path.join(CACHE_DIR, f"{cache_key}.mp4")
 
-            cmd = [
-                sys.executable,
-                "gen_depth.py",
-                "--input", input_path,
-                "--output", cache_output,  # Output to cache first
-                "--model", model_type,
-                "--foreground-method", foreground_method,
-                "--threshold", threshold,
-                "--status-file", os.path.join(UPLOAD_DIR, f"{job_id}.status")
-            ]
+                cmd = [
+                    sys.executable,
+                    "gen_depth.py",
+                    "--input", input_path,
+                    "--output", cache_output,  # Output to cache first
+                    "--model", model_type,
+                    "--foreground-method", foreground_method,
+                    "--threshold", threshold,
+                    "--status-file", os.path.join(UPLOAD_DIR, f"{job_id}.status")
+                ]
 
-            def on_complete():
-                """Callback when processing completes"""
-                if os.path.exists(cache_output):
-                    # Copy from cache to output
-                    shutil.copy2(cache_output, output_path)
+                def on_complete():
+                    """Callback when processing completes"""
+                    if os.path.exists(cache_output):
+                        # Copy from cache to output
+                        shutil.copy2(cache_output, output_path)
 
-            # Run the process in the background
-            process = subprocess.Popen(
-                cmd,
-                stdout=open(os.path.join(UPLOAD_DIR, f"{job_id}.log"), "w"),
-                stderr=subprocess.STDOUT,
-                bufsize=1,  # Line buffered
-                universal_newlines=True  # Text mode
-            )
+                # Run the process in the background
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=open(os.path.join(UPLOAD_DIR, f"{job_id}.log"), "w"),
+                    stderr=subprocess.STDOUT,
+                    bufsize=1,  # Line buffered
+                    universal_newlines=True  # Text mode
+                )
 
-            # Return the job ID to the client
-            self._set_headers()
-            self.wfile.write(json.dumps({
-                "job_id": job_id,
-                "status": "processing"
-            }).encode())
+                # Return the job ID to the client
+                try:
+                    self._set_headers()
+                    self.wfile.write(json.dumps({
+                        "job_id": job_id,
+                        "status": "processing"
+                    }).encode())
+                except (BrokenPipeError, ConnectionResetError):
+                    print(f"Client disconnected while sending response for job {job_id}")
 
-        else:
-            self.send_response(404)
-            self.end_headers()
+            else:
+                try:
+                    self.send_response(404)
+                    self.end_headers()
+                except (BrokenPipeError, ConnectionResetError):
+                    print(f"Client disconnected while sending 404 for {self.path}")
+        
+        except (BrokenPipeError, ConnectionResetError):
+            print(f"Client disconnected during POST request processing for {self.path}")
+        except Exception as e:
+            print(f"Error processing POST request: {str(e)}")
+            try:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+            except (BrokenPipeError, ConnectionResetError):
+                print("Client disconnected while sending error response")
 
 def run_server():
-    server_address = ('', PORT)
+    server_address = ('0.0.0.0', PORT)
     httpd = HTTPServer(server_address, DepthMapHandler)
     print(f"Starting depth map generator server on port {PORT}...")
-    print(f"Open http://localhost:{PORT} in your browser")
+    print(f"Local access: http://localhost:{PORT}")
+    print(f"To access from other devices on your network, find your computer's IP address")
+    print(f"On macOS/Linux, use: ifconfig | grep 'inet '")
+    print(f"On Windows, use: ipconfig")
     httpd.serve_forever()
 
 if __name__ == "__main__":

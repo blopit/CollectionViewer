@@ -289,20 +289,52 @@ export class VideoGallery {
       window.cleanup();
     }
 
+    // Add error handlers for videos
+    const handleVideoError = (videoEl, type, url) => {
+      console.error(`${type} video loading error:`, videoEl.error);
+      
+      // Try with alternate URL for depth videos (some mobile browsers have issues with the 'depth_' prefix)
+      if (type === 'Depth' && url.includes('/depth_')) {
+        const altUrl = url.replace('/depth_', '/');
+        console.log(`Trying alternate URL for depth video: ${altUrl}`);
+        videoEl.src = altUrl;
+        videoEl.load();
+        return true;
+      }
+      return false;
+    };
+
+    // Handle potential errors
+    originalVideo.onerror = () => {
+      handleVideoError(originalVideo, 'Original', video.original_url);
+    };
+    
+    depthVideo.onerror = () => {
+      handleVideoError(depthVideo, 'Depth', video.depth_url);
+    };
+
     // Wait for both videos to be ready before initializing 3D effect
     Promise.all([
-      new Promise(resolve => {
+      new Promise((resolve, reject) => {
         if (originalVideo.readyState >= 2) {
           resolve();
         } else {
           originalVideo.addEventListener('canplay', resolve, { once: true });
+          originalVideo.addEventListener('error', () => {
+            const retried = handleVideoError(originalVideo, 'Original', video.original_url);
+            if (!retried) reject(new Error('Failed to load original video'));
+          }, { once: true });
         }
       }),
-      new Promise(resolve => {
+      new Promise((resolve, reject) => {
         if (depthVideo.readyState >= 2) {
           resolve();
         } else {
           depthVideo.addEventListener('canplay', resolve, { once: true });
+          depthVideo.addEventListener('error', () => {
+            const retried = handleVideoError(depthVideo, 'Depth', video.depth_url);
+            if (!retried) reject(new Error('Failed to load depth video'));
+          }, { once: true });
         }
       })
     ]).then(() => {
@@ -311,9 +343,18 @@ export class VideoGallery {
         window.init();
       }
       // Start playback
-      originalVideo.play().catch(console.error);
-      depthVideo.play().catch(console.error);
-    }).catch(console.error);
+      originalVideo.play().catch(err => {
+        console.error('Error playing original video:', err);
+        // Show user-friendly error message
+        this.showError('Could not play video. Try tapping on the screen (mobile) or check console for errors.');
+      });
+      depthVideo.play().catch(err => {
+        console.error('Error playing depth video:', err);
+      });
+    }).catch(error => {
+      console.error('Error loading videos:', error);
+      this.showError('Error loading videos. Please try another video or refresh the page.');
+    });
   }
 
   show() {

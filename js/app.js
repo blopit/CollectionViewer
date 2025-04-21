@@ -47,6 +47,9 @@ const STORAGE_KEY = 'collectionViewerSettings';
 // Add cursor position tracking
 const cursorPosition = { x: 0.5, y: 0.5 };
 
+// Add this flag at the top of the file with other global variables
+let isInitializing = false;
+
 /**
  * Saves the current settings to localStorage
  */
@@ -100,7 +103,7 @@ const params = {
   // Clear coat parameters
   clearCoat: 1.0,
   clearCoatRoughness: 0.1,
-  clearCoatNormalScale: 0.3,
+  clearCoatNormalScale: 0.5,  // Increased from 0.3 for more visible effect
 
   // New cursor light parameters
   cursorLightStrength: 0.8,    // Strength of cursor light
@@ -170,6 +173,14 @@ function cleanup() {
  * This is the main entry point for the application
  */
 function init() {
+  // Prevent multiple initializations running simultaneously
+  if (isInitializing) {
+    console.log('Initialization already in progress, skipping');
+    return;
+  }
+  
+  isInitializing = true;
+
   // Clean up any existing scene first
   cleanup();
 
@@ -192,6 +203,52 @@ function init() {
   // Get video elements from DOM
   const video = document.getElementById('original-video');
   const depthVideo = document.getElementById('depth-video');
+
+  if (!video || !depthVideo) {
+    console.error('Video elements not found in DOM:', {
+      originalVideo: !!video,
+      depthVideo: !!depthVideo
+    });
+    const errorMessage = document.createElement('div');
+    errorMessage.id = 'error-message';
+    errorMessage.textContent = 'Error: Video elements not found. Please refresh the page.';
+    document.body.appendChild(errorMessage);
+    isInitializing = false;
+    return;
+  }
+
+  // Make sure videos are visible but still not displayed
+  // Some mobile browsers won't load hidden videos
+  video.style.position = 'fixed';
+  video.style.width = '1px';
+  video.style.height = '1px';
+  video.style.opacity = '0.01';
+  video.style.pointerEvents = 'none';
+  video.style.zIndex = '-1000';
+  
+  depthVideo.style.position = 'fixed';
+  depthVideo.style.width = '1px';
+  depthVideo.style.height = '1px';
+  depthVideo.style.opacity = '0.01';
+  depthVideo.style.pointerEvents = 'none';
+  depthVideo.style.zIndex = '-1000';
+
+  // Add error event handlers to videos
+  video.addEventListener('error', (e) => {
+    console.error('Original video error:', video.error, e);
+    const errorMessage = document.createElement('div');
+    errorMessage.id = 'error-message';
+    errorMessage.textContent = `Original video error: ${video.error?.message || 'Unknown error'}`;
+    document.body.appendChild(errorMessage);
+  });
+
+  depthVideo.addEventListener('error', (e) => {
+    console.error('Depth video error:', depthVideo.error, e);
+    const errorMessage = document.createElement('div');
+    errorMessage.id = 'error-message';
+    errorMessage.textContent = `Depth video error: ${depthVideo.error?.message || 'Unknown error'}`;
+    document.body.appendChild(errorMessage);
+  });
 
   // Stop any existing playback
   video.pause();
@@ -241,13 +298,49 @@ function init() {
     createCard(aspectRatio);
 
     // Start videos if they're not already playing
-    if (video.paused) video.play().catch(console.error);
-    if (depthVideo.paused) depthVideo.play().catch(console.error);
+    const startPlayback = () => {
+      if (video.paused) {
+        video.play().catch(error => {
+          console.warn('Video playback failed:', error);
+          // Show tap message on mobile
+          if (isMobile) {
+            document.getElementById('tap-message').style.display = 'block';
+          }
+        });
+      }
+      if (depthVideo.paused) {
+        depthVideo.play().catch(console.error);
+      }
+    };
+
+    // Handle mobile playback
+    if (isMobile) {
+      document.addEventListener('touchstart', () => {
+        startPlayback();
+        document.getElementById('tap-message').style.display = 'none';
+      }, { once: true });
+    } else {
+      startPlayback();
+    }
 
     // Start animation loop
     animate();
+    
+    // Reset initialization flag
+    isInitializing = false;
   }).catch(error => {
     console.error('Error loading videos:', error);
+    // Show error message to user
+    const errorMessage = document.createElement('div');
+    errorMessage.id = 'error-message';
+    errorMessage.textContent = 'Error loading videos. Please try refreshing the page.';
+    document.body.appendChild(errorMessage);
+    
+    // Reset initialization flag so user can try again
+    isInitializing = false;
+    
+    // Ensure we clean up properly on error
+    cleanup();
   });
 
   // Add window resize handler
@@ -255,7 +348,45 @@ function init() {
 
   // Add device motion handler for mobile
   if (isMobile) {
-    window.addEventListener('deviceorientation', handleOrientation, true);
+    // For iOS 13+ we need to request permission
+    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      // iOS 13+ requires permission request
+      const requestPermission = () => {
+        DeviceOrientationEvent.requestPermission()
+          .then(response => {
+            if (response === 'granted') {
+              window.addEventListener('deviceorientation', handleOrientation, true);
+            } else {
+              console.log('Device orientation permission not granted');
+            }
+          })
+          .catch(console.error);
+      };
+
+      // Add a button to request permission
+      const permissionButton = document.createElement('button');
+      permissionButton.className = 'permission-button';
+      permissionButton.textContent = 'Enable 3D Effect';
+      permissionButton.style.position = 'absolute';
+      permissionButton.style.top = '50%';
+      permissionButton.style.left = '50%';
+      permissionButton.style.transform = 'translate(-50%, -50%)';
+      permissionButton.style.padding = '12px 24px';
+      permissionButton.style.backgroundColor = '#4CAF50';
+      permissionButton.style.color = 'white';
+      permissionButton.style.border = 'none';
+      permissionButton.style.borderRadius = '4px';
+      permissionButton.style.fontSize = '16px';
+      permissionButton.style.zIndex = '1000';
+      permissionButton.onclick = () => {
+        requestPermission();
+        permissionButton.remove();
+      };
+      document.body.appendChild(permissionButton);
+    } else {
+      // Other mobile devices don't need permission
+      window.addEventListener('deviceorientation', handleOrientation, true);
+    }
   }
 
   // Add touch handler
@@ -657,11 +788,20 @@ function createCard(aspectRatio) {
           // Apply clear coat layer
           vec3 clearCoatColor = vec3(1.0);
           float clearCoatStrength = clearCoat * clearCoatFresnel;
-          finalColor = mix(finalColor, clearCoatColor, clearCoatStrength * clearCoatSpecular);
           
-          // Add clear coat normal mapping effect
-          float clearCoatNormalFactor = clearCoatNormalScale * clearCoatStrength;
-          finalColor += clearCoatColor * clearCoatNormalFactor * clearCoatSpecular;
+          // Apply normal scale to create more varied surface detail
+          float normalDetail = sin(vUv.x * 50.0 * clearCoatNormalScale) * cos(vUv.y * 50.0 * clearCoatNormalScale) * 0.5 + 0.5;
+          float enhancedNormalEffect = normalDetail * clearCoatNormalScale;
+          
+          // Add the enhanced normal detail to the clear coat effect
+          float enhancedClearCoat = clearCoatStrength * (1.0 + enhancedNormalEffect);
+          
+          // Mix the clear coat effect with the base color
+          finalColor = mix(finalColor, clearCoatColor, enhancedClearCoat * clearCoatSpecular);
+          
+          // Add specular highlight influenced by the normal scale
+          float normalHighlight = pow(normalDetail, 2.0) * clearCoatNormalScale * clearCoatStrength;
+          finalColor += clearCoatColor * normalHighlight * clearCoatSpecular * 0.5;
         }
 
         gl_FragColor = vec4(finalColor, texColor.a);
@@ -695,8 +835,17 @@ function createCard(aspectRatio) {
   backgroundPlane.position.z = -0.05;
 
   // Add both meshes to scene
-  scene.add(backgroundPlane);
-  scene.add(card);
+  if (scene) {
+    scene.add(backgroundPlane);
+    scene.add(card);
+  } else {
+    console.error("Cannot add meshes to scene: scene is null");
+    // Clean up if scene is null
+    if (cardGeometry) cardGeometry.dispose();
+    if (cardMaterial) cardMaterial.dispose();
+    if (backgroundGeometry) backgroundGeometry.dispose();
+    if (backgroundMaterial) backgroundMaterial.dispose();
+  }
 }
 
 /**
@@ -829,6 +978,16 @@ let time = 0;
  * Updates time-based effects and handles card rotation
  */
 function animate() {
+  // Make sure we have all required objects before proceeding
+  if (!scene || !camera || !renderer) {
+    console.error('Cannot animate: missing required 3D objects', {
+      hasScene: !!scene,
+      hasCamera: !!camera,
+      hasRenderer: !!renderer
+    });
+    return;
+  }
+
   if (card?.material?.uniforms) {
     card.material.uniforms.cursorPos.value.set(cursorPosition.x, cursorPosition.y);
   }
@@ -971,7 +1130,8 @@ function setupControls() {
       { id: 'clear-coat-normal-scale', value: params.clearCoatNormalScale, displayId: 'clear-coat-normal-scale-value' }
     ];
 
-    sliderConfigs.forEach(config => {
+    // Use for...of instead of forEach for better performance and to fix linter warning
+    for (const config of sliderConfigs) {
       const slider = document.getElementById(config.id);
       const display = document.getElementById(config.displayId);
 
@@ -986,7 +1146,7 @@ function setupControls() {
           : config.value.toFixed(2);
         display.textContent = formatted;
       }
-    });
+    }
 
     // Set toggle switch states
     const toggleDepth = document.getElementById('toggle-depth');
@@ -1116,7 +1276,7 @@ function setupControls() {
       if (valueEl) {
         valueEl.textContent = params[paramName].toFixed(formatDecimals);
       }
-      if (card?.material?.uniforms && card.material.uniforms[uniformName]) {
+      if (card?.material?.uniforms?.[uniformName]) {
         card.material.uniforms[uniformName].value = params[paramName];
       }
       saveSettings(); // Save settings after change
@@ -1210,6 +1370,14 @@ function setupControls() {
 
       saveSettings(); // Save settings after change
     });
+
+    // Update the clear coat normal scale slider to have a wider range
+    const clearCoatNormalScaleEl = document.getElementById('clear-coat-normal-scale');
+    if (clearCoatNormalScaleEl) {
+      clearCoatNormalScaleEl.min = "0";
+      clearCoatNormalScaleEl.max = "5";
+      clearCoatNormalScaleEl.step = "0.1";
+    }
   }
 
   // Add event listeners for shine effects
