@@ -1,0 +1,1 @@
+<?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Details>No such object: mediapipe-models/image_classifier/imagenet_mobilenet_v2_224_1_metadata_1/float32/1/mobilenet_v2_1.0_224.tflite</Details></Error>

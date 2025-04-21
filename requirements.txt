@@ -1,0 +1,19 @@
+flask==2.2.5
+open3d==0.17.0
+depth-to-mesh==0.1.4
+pillow==9.5.0
+numpy>=1.20.0
+werkzeug>=2.2.3
+replicate==0.7.0
+
+# Optional dependencies (may require special installation)
+# pytorch3d - installation depends on CUDA version, see: https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md
+# kaolin - installation depends on CUDA version, see: https://kaolin.readthedocs.io/en/latest/notes/installation.html
+# depth-to-mesh - pip install depth-to-mesh
+
+# For Replicate API (if using hosted service)
+# replicate
+
+# External repositories (require separate installation)
+# 3d-photo-inpainting - https://github.com/vt-vl-lab/3d-photo-inpainting
+# one_shot_3d_photography - https://github.com/facebookresearch/one_shot_3d_photography 

@@ -1,0 +1,9 @@
+
+mode: "video"
+img_folder: "videos/inpainting/6bcdd332-2b03-4d64-b3df-5ae4ab2c1b4b/frames"
+depth_folder: "videos/inpainting/6bcdd332-2b03-4d64-b3df-5ae4ab2c1b4b/depth"
+mesh_folder: "videos/inpainting/6bcdd332-2b03-4d64-b3df-5ae4ab2c1b4b/mesh"
+video_folder: "videos/inpainting/6bcdd332-2b03-4d64-b3df-5ae4ab2c1b4b/video"
+load_size: 384
+save_ply: True
+                

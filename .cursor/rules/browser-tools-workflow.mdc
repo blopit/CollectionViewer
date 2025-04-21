@@ -1,0 +1,39 @@
+# Browser Tools Workflow
+
+## Pre-Change Checks
+1. Run `getConsoleLogs` to check current state
+2. Run `getConsoleErrors` to identify existing issues
+3. Run `getNetworkLogs` to check network state
+4. Take screenshot of current state with `takeScreenshot`
+5. Document all existing issues
+
+## During Development
+1. Keep browser console open
+2. Monitor network tab for requests
+3. Watch for new errors or warnings
+4. Document any new issues that appear
+
+## Post-Change Verification
+1. Run all pre-change checks again
+2. Compare new logs/errors with pre-change state
+3. Run appropriate audits:
+   - `runAccessibilityAudit` for UI changes
+   - `runPerformanceAudit` for performance-related changes
+   - `runBestPracticesAudit` for code quality changes
+   - `runSEOAudit` for content/metadata changes
+4. Verify no new issues were introduced
+5. Document any remaining issues
+
+## Error Resolution Process
+1. Use `getConsoleErrors` to get detailed error information
+2. Check error stack trace for source location
+3. Use `getConsoleLogs` to understand the context
+4. Verify fix with all relevant browser tools
+5. Document resolution steps
+
+## Best Practices
+- Always run browser tools before committing changes
+- Compare before/after states
+- Document all issues and resolutions
+- Use appropriate audit tools based on change type
+- Keep error logs for reference 
