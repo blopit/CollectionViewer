@@ -1469,5 +1469,50 @@ window.addEventListener('touchmove', (e) => {
 window.init = init;
 window.cleanup = cleanup;
 
-// Initialize on load
-init();
+// Load default videos
+const defaultVideos = {
+  original_url: '/videos/depth/video_1745273322.mp4',
+  depth_url: '/videos/depth/depth_video_1745273322.mp4',
+  normal_url: '/videos/depth/normal_video_1745273322.mp4'
+};
+
+// Initialize with default videos when page loads
+document.addEventListener('DOMContentLoaded', () => {
+  const originalVideo = document.querySelector('#original-video');
+  const depthVideo = document.querySelector('#depth-video');
+  const normalVideo = document.querySelector('#normal-video');
+
+  // Hide upload container
+  document.querySelector('.upload-container').style.display = 'none';
+  
+  // Set video sources
+  originalVideo.src = defaultVideos.original_url;
+  depthVideo.src = defaultVideos.depth_url;
+  normalVideo.src = defaultVideos.normal_url;
+
+  // Load videos
+  Promise.all([
+    new Promise(resolve => {
+      originalVideo.addEventListener('canplay', resolve, { once: true });
+      originalVideo.load();
+    }),
+    new Promise(resolve => {
+      depthVideo.addEventListener('canplay', resolve, { once: true });
+      depthVideo.load();
+    }),
+    new Promise(resolve => {
+      normalVideo.addEventListener('canplay', resolve, { once: true });
+      normalVideo.load();
+    })
+  ]).then(() => {
+    // Initialize 3D effect
+    init();
+    
+    // Start playback
+    originalVideo.play();
+    depthVideo.play();
+    normalVideo.play();
+  }).catch(error => {
+    console.error('Error loading default videos:', error);
+  });
+});

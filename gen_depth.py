@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Depth Map Generator for 3D Collection Viewer
+Depth Map and Normal Map Generator for 3D Collection Viewer
 
-This script generates depth maps from a video file using the MiDaS neural network.
-The depth maps are then combined into a video file that can be used by the 3D Collection Viewer.
+This script generates depth maps and normal maps from a video file using the MiDaS neural network.
+The maps are then combined into video files that can be used by the 3D Collection Viewer.
 
 Requirements:
 - PyTorch
@@ -15,7 +15,7 @@ Usage:
     python gen_depth.py
 
 The script expects a video file at 'videos/video.mp4' and will output
-the depth map video to 'videos/depth_video.mp4'.
+the depth map video to 'videos/depth_video.mp4' and normal map to 'videos/normal_video.mp4'.
 """
 
 import os
@@ -59,16 +59,67 @@ def calculate_video_hash(file_path):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
 
+def generate_normal_map(depth_image, strength=2.0, smoothing=1):
+    """Generate a normal map from a depth map using enhanced Sobel operators
+    
+    Args:
+        depth_image: Input depth map
+        strength: Strength of the normal map effect (higher = more pronounced)
+        smoothing: Gaussian blur kernel size for noise reduction
+    """
+    # Convert depth to float32 if not already
+    depth = depth_image.astype(np.float32)
+    
+    # Apply optional smoothing to reduce noise
+    if smoothing > 0:
+        depth = cv2.GaussianBlur(depth, (smoothing * 2 + 1, smoothing * 2 + 1), 0)
+    
+    # Calculate gradients using Sobel operators with larger kernel for better detail
+    grad_x = cv2.Sobel(depth, cv2.CV_32F, 1, 0, ksize=5)
+    grad_y = cv2.Sobel(depth, cv2.CV_32F, 0, 1, ksize=5)
+    
+    # Create normal map
+    normal_map = np.zeros((depth.shape[0], depth.shape[1], 3), dtype=np.float32)
+    
+    # X and Y components from gradients (adjusted by strength)
+    normal_map[..., 0] = -grad_x * strength
+    normal_map[..., 1] = -grad_y * strength
+    
+    # Z component is constant but adjusted by strength
+    normal_map[..., 2] = 1.0 / strength
+    
+    # Normalize vectors
+    norm = np.sqrt(np.sum(normal_map * normal_map, axis=2, keepdims=True))
+    normal_map = normal_map / (norm + 1e-10)
+    
+    # Apply additional edge preservation
+    edge_mask = np.abs(grad_x) + np.abs(grad_y)
+    edge_mask = edge_mask / edge_mask.max()
+    edge_mask = np.clip(edge_mask * 2, 0, 1)
+    
+    # Enhance edges in the normal map
+    normal_map = normal_map * (1 + edge_mask[..., np.newaxis] * 0.5)
+    
+    # Renormalize after edge enhancement
+    norm = np.sqrt(np.sum(normal_map * normal_map, axis=2, keepdims=True))
+    normal_map = normal_map / (norm + 1e-10)
+    
+    # Convert from [-1,1] range to [0,1] for visualization
+    normal_map = (normal_map + 1.0) * 0.5
+    
+    # Convert to RGB uint8
+    return (normal_map * 255).astype(np.uint8)
+
 def check_cache(video_hash):
     """Check if a processed version of this video already exists"""
     videos_dir = os.path.join('videos', 'depth')
     if not os.path.exists(videos_dir):
-        return None, None
+        return None, None, None
         
     # Check for cache file
     cache_file = os.path.join(videos_dir, 'cache.json')
     if not os.path.exists(cache_file):
-        return None, None
+        return None, None, None
         
     try:
         with open(cache_file, 'r') as f:
@@ -76,13 +127,14 @@ def check_cache(video_hash):
             if video_hash in cache:
                 video_path = os.path.join(videos_dir, cache[video_hash]['video'])
                 depth_path = os.path.join(videos_dir, cache[video_hash]['depth'])
-                if os.path.exists(video_path) and os.path.exists(depth_path):
-                    return video_path, depth_path
+                normal_path = os.path.join(videos_dir, cache[video_hash]['normal'])
+                if os.path.exists(video_path) and os.path.exists(depth_path) and os.path.exists(normal_path):
+                    return video_path, depth_path, normal_path
     except Exception as e:
         print(f"Error reading cache: {str(e)}")
-    return None, None
+    return None, None, None
 
-def update_cache(video_hash, video_filename, depth_filename):
+def update_cache(video_hash, video_filename, depth_filename, normal_filename):
     """Update the cache with new video information"""
     videos_dir = os.path.join('videos', 'depth')
     cache_file = os.path.join(videos_dir, 'cache.json')
@@ -100,6 +152,7 @@ def update_cache(video_hash, video_filename, depth_filename):
     cache[video_hash] = {
         'video': video_filename,
         'depth': depth_filename,
+        'normal': normal_filename,
         'timestamp': time.time()
     }
     
@@ -119,10 +172,10 @@ def save_uploaded_video(input_path):
     video_hash = calculate_video_hash(input_path)
     
     # Check cache first
-    cached_video, cached_depth = check_cache(video_hash)
-    if cached_video and cached_depth:
+    cached_video, cached_depth, cached_normal = check_cache(video_hash)
+    if cached_video and cached_depth and cached_normal:
         print(f"Found cached version of video")
-        return cached_video, os.path.basename(cached_video), video_hash
+        return cached_video, os.path.basename(cached_depth), video_hash
     
     # If not cached, save as new
     timestamp = int(time.time())
@@ -143,8 +196,29 @@ def update_status(status_file, stage, progress=None, total=None, message=None, e
         "stage": stage,
         "progress": progress,
         "total": total,
-        "message": message
+        "message": message,
+        "timestamp": time.time()
     }
+    
+    # Add performance metrics
+    if hasattr(update_status, 'start_time'):
+        elapsed = time.time() - update_status.start_time
+        status['performance'] = {
+            'elapsed_time': round(elapsed, 1),
+            'elapsed_human': f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+        }
+    else:
+        update_status.start_time = time.time()
+    
+    # Add GPU info if available
+    if torch.cuda.is_available():
+        gpu_info = {
+            'gpu_name': torch.cuda.get_device_name(0),
+            'gpu_memory_used': f"{torch.cuda.memory_allocated() / 1024**2:.1f}MB",
+            'gpu_memory_total': f"{torch.cuda.get_device_properties(0).total_memory / 1024**2:.1f}MB",
+            'gpu_utilization': f"{torch.cuda.utilization():.1f}%"
+        }
+        status['gpu_info'] = gpu_info
     
     # Add any extra information to status
     if extra_info:
@@ -162,8 +236,12 @@ def update_status(status_file, stage, progress=None, total=None, message=None, e
         # Also log to stdout for the log file
         if message:
             log_msg = f"[{stage}] {message}"
+            if progress is not None and total is not None:
+                log_msg += f" ({progress}/{total})"
             if extra_info:
-                log_msg += f" | {' | '.join(f'{k}: {v}' for k, v in extra_info.items())}"
+                log_msg += f" | {' | '.join(f'{k}: {v}' for k, v in extra_info.items() if k != 'gpu_info')}"
+            if 'gpu_info' in status:
+                log_msg += f" | GPU: {status['gpu_info']['gpu_memory_used']}/{status['gpu_info']['gpu_memory_total']}"
             print(log_msg)
             sys.stdout.flush()  # Ensure log is written immediately
     except Exception as e:
@@ -177,8 +255,8 @@ def main():
     video_path, video_filename, video_hash = save_uploaded_video(args.input)
     
     # Check if we have a cached version
-    cached_video, cached_depth = check_cache(video_hash)
-    if cached_video and cached_depth:
+    cached_video, cached_depth, cached_normal = check_cache(video_hash)
+    if cached_video and cached_depth and cached_normal:
         # Return cached paths
         status = {
             "status": "completed",
@@ -187,6 +265,7 @@ def main():
             "total": 100,
             "message": "Using cached version",
             "depth_video_url": f"/videos/depth/{os.path.basename(cached_depth)}",
+            "normal_video_url": f"/videos/depth/{os.path.basename(cached_normal)}",
             "original_video_url": f"/videos/depth/{os.path.basename(cached_video)}",
             "stats": {
                 "cached": True,
@@ -199,33 +278,40 @@ def main():
         print("✨ Using cached version!")
         return
 
-    # Update output path to be in the same directory
+    # Update output paths to be in the same directory
     output_filename = f'depth_{video_filename}'
+    normal_filename = f'normal_{video_filename}'
     args.output = os.path.join('videos', 'depth', output_filename)
+    normal_output = os.path.join('videos', 'depth', normal_filename)
     
     # Create temporary directory
     temp_dir = tempfile.mkdtemp()
     frames_dir = os.path.join(temp_dir, "frames")
     depth_dir = os.path.join(temp_dir, "depth")
+    normal_dir = os.path.join(temp_dir, "normal")
 
     os.makedirs(frames_dir, exist_ok=True)
     os.makedirs(depth_dir, exist_ok=True)
+    os.makedirs(normal_dir, exist_ok=True)
 
     try:
         # Step 1: Load model
         update_status(args.status_file, "loading_model", 
                      progress=0, total=100,
                      message="Loading MiDaS model...",
-                     extra_info={"device": "GPU" if torch.cuda.is_available() else "CPU"})
+                     extra_info={
+                         "model_type": args.model,
+                         "device": "GPU" if torch.cuda.is_available() else "CPU"
+                     })
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
+        model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small" if args.model == "small" else "MiDaS")
         model.to(device)
         model.eval()
 
         # Define transformation
         transform = Compose([
-            Resize((256, 256)),
+            Resize((384 if args.model == "small" else 512, 384 if args.model == "small" else 512)),
             ToTensor(),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
@@ -330,6 +416,14 @@ def main():
             depth_image = Image.fromarray(output)
             depth_image.save(depth_path)
 
+            # Generate normal map with enhanced parameters
+            normal_map = generate_normal_map(output, strength=2.5, smoothing=1)
+
+            # Save normal map
+            normal_path = os.path.join(normal_dir, os.path.basename(frame_path))
+            normal_image = Image.fromarray(normal_map)
+            normal_image.save(normal_path)
+
         # Step 4: Create final video
         update_status(args.status_file, "creating_video", 
                      progress=90, total=100,
@@ -351,6 +445,18 @@ def main():
         ]
         subprocess.run(cmd, check=True)
         
+        # Create normal map video
+        cmd = [
+            "ffmpeg", "-y",
+            "-framerate", str(fps),
+            "-i", os.path.join(normal_dir, "frame_%06d.jpg"),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-crf", "18",  # High quality
+            normal_output
+        ]
+        subprocess.run(cmd, check=True)
+        
         # Update final status and cache
         status = {
             "status": "completed",
@@ -359,6 +465,7 @@ def main():
             "total": 100,
             "message": "Depth map generation complete",
             "depth_video_url": f"/videos/depth/{output_filename}",
+            "normal_video_url": f"/videos/depth/{normal_filename}",
             "original_video_url": f"/videos/depth/{video_filename}",
             "stats": {
                 "total_frames": total_frames,
@@ -373,7 +480,7 @@ def main():
                 json.dump(status, f)
         
         # Update cache with new video
-        update_cache(video_hash, video_filename, output_filename)
+        update_cache(video_hash, video_filename, output_filename, normal_filename)
         
         print("✨ Process completed successfully!")
         

@@ -1,1 +1,0 @@
-{"status": "completed", "stage": "finished", "progress": 100, "total": 100, "message": "Depth map generation complete", "depth_video_url": "/videos/2b7cf7bf80dbf054ebf71148cc513f5ba9704aa33f136fddb9bb9c26797114bc_small_bgsubtract_0.2.mp4", "stats": {"total_frames": 221, "resolution": "576x1024", "fps": 30.0, "processing_time": 105.3}}

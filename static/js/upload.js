@@ -1,9 +1,10 @@
 /**
- * Video Upload and Depth Map Generation
+ * Video Upload and Depth/Normal Map Generation
  * This module handles video file upload and processing using the depth map generator.
  */
 
 import { VideoGallery } from './gallery.js';
+import { GyroControls } from './gyro-controls.js';
 
 export class VideoUploader {
   constructor() {
@@ -14,6 +15,7 @@ export class VideoUploader {
     this.detailedStatus = null;
     this.uploadButton = null;
     this.gallery = new VideoGallery();
+    this.gyroControls = new GyroControls(null);
     this.init();
   }
 
@@ -170,7 +172,11 @@ export class VideoUploader {
 
     // Add to page
     const controlsPanel = document.querySelector('.controls-panel');
-    controlsPanel?.insertBefore?.(this.uploadContainer, controlsPanel.firstChild);
+    if (controlsPanel?.firstChild) {
+      controlsPanel.insertBefore(this.uploadContainer, controlsPanel.firstChild);
+    } else if (controlsPanel) {
+      controlsPanel.appendChild(this.uploadContainer);
+    }
 
     // Store elements
     this.progressBar = this.uploadContainer.querySelector('.progress-bar');
@@ -284,102 +290,199 @@ export class VideoUploader {
       const response = await fetch(`/status/${jobId}`);
       const data = await response.json();
 
-      // Update progress bar based on stage
-      let progress = 0;
-      switch (data.stage) {
-        case 'loading_model':
-          progress = 30;
-          break;
-        case 'extracting_frames':
-          progress = 40 + (data.progress / data.total) * 20;
-          break;
-        case 'processing':
-        case 'generating_depth':
-          progress = 60 + (data.progress / data.total) * 30;
-          break;
-        case 'creating_video':
-        case 'encoding_video':
-          progress = 90;
-          break;
-        case 'finished':
-          progress = 100;
-          break;
-        default:
-          progress = 50;
+      // Update progress bar
+      if (data.progress !== undefined && data.total !== undefined) {
+        const percent = Math.round((data.progress / data.total) * 100);
+        this.progressBar.innerHTML = `<div class="progress-fill" style="width: ${percent}%"></div>`;
       }
 
-      // Update UI elements
-      this.progressBar.style.width = `${progress}%`;
-      this.statusText.textContent = data.message || 'Processing...';
-      
-      // Extract frame info from message if available
-      let framesInfo = {};
-      if (data?.message?.includes('frame')) {
-        const match = data.message.match(/frame (\d+)\/(\d+)/i);
-        if (match) {
-          framesInfo = {
-            frames_processed: Number.parseInt(match[1], 10),
-            total_frames: Number.parseInt(match[2], 10)
-          };
+      // Update status text
+      if (data.message) {
+        this.statusText.textContent = data.message;
+      }
+
+      // Update detailed status
+      let details = '';
+      if (data.stage) {
+        details += `Stage: ${data.stage}\n`;
+      }
+      if (data.progress !== undefined && data.total !== undefined) {
+        const percent = Math.round((data.progress / data.total) * 100);
+        details += `Progress: ${percent}%\n`;
+      }
+      if (data.stats) {
+        details += '\nStats:\n';
+        for (const [key, value] of Object.entries(data.stats)) {
+          details += `${key}: ${value}\n`;
         }
       }
+      this.detailedStatus.textContent = details;
 
-      // Prepare detailed status data
-      const statusData = {
-        stage: data.stage,
-        progress: data.progress,
-        total: data.total,
-        extra_info: {
-          ...framesInfo,
-          // Add any log information if available
-          ...(data.log ? { processing_info: data.log } : {})
-        },
-        stats: data.stats || {}
-      };
-
-      // Update the detailed status
-      this.updateDetailedStatus(statusData);
-
+      // Check if processing is complete
       if (data.status === 'completed') {
-        // Show completion stats
-        const completionStats = {
-          stage: 'finished',
-          progress: 100,
-          total: 100,
-          stats: {
-            resolution: data.stats?.resolution || 'unknown',
-            fps: data.stats?.fps || 'unknown',
-            total_frames: data.stats?.total_frames || 'unknown',
-            processing_time: data.stats?.processing_time ? `${data.stats.processing_time}s` : 'unknown'
+        this.progressBar.innerHTML = '<div class="progress-fill" style="width: 100%"></div>';
+        this.statusText.textContent = 'Processing complete!';
+        
+        // Add video preview with gyroscope controls
+        const previewContainer = document.createElement('div');
+        previewContainer.className = 'video-preview';
+
+        // Create video grid container
+        const videoGrid = document.createElement('div');
+        videoGrid.className = 'video-grid';
+
+        // Add each video with its container
+        const videos = [
+          { title: 'Original Video', url: data.original_video_url },
+          { title: 'Depth Map', url: data.depth_video_url },
+          { title: 'Normal Map', url: data.normal_video_url }
+        ];
+
+        for (const { title, url } of videos) {
+          const videoItem = document.createElement('div');
+          videoItem.className = 'video-item';
+          
+          const heading = document.createElement('h3');
+          heading.textContent = title;
+          
+          const videoContainer = document.createElement('div');
+          videoContainer.className = 'video-container';
+          
+          const video = document.createElement('video');
+          video.src = url;
+          video.controls = true;
+          
+          videoContainer.appendChild(video);
+          videoItem.appendChild(heading);
+          videoItem.appendChild(videoContainer);
+          videoGrid?.appendChild(videoItem);
+
+          // Enable gyro controls for this video container if on mobile
+          if (this.gyroControls.isMobileDevice() && this.gyroControls.hasGyroscope()) {
+            // Add gyro toggle button
+            const gyroButton = document.createElement('button');
+            gyroButton.className = 'gyro-toggle';
+            gyroButton.innerHTML = `
+              <svg viewBox="0 0 24 24" width="24" height="24">
+                <path fill="currentColor" d="M12,2L7,7H11V13H13V7H17L12,2M17,17H7V15H17V17Z"/>
+              </svg>
+              Enable Gyro
+            `;
+            videoItem.appendChild(gyroButton);
+
+            let isGyroEnabled = false;
+            gyroButton.addEventListener('click', async () => {
+              if (!isGyroEnabled) {
+                const enabled = await this.gyroControls.enable();
+                if (enabled) {
+                  this.gyroControls.setVideoContainer(videoContainer);
+                  gyroButton.classList.add('active');
+                  gyroButton.innerHTML = `
+                    <svg viewBox="0 0 24 24" width="24" height="24">
+                      <path fill="currentColor" d="M12,2L7,7H11V13H13V7H17L12,2M17,17H7V15H17V17Z"/>
+                    </svg>
+                    Disable Gyro
+                  `;
+                  isGyroEnabled = true;
+                }
+              } else {
+                this.gyroControls.disable();
+                gyroButton.classList.remove('active');
+                gyroButton.innerHTML = `
+                  <svg viewBox="0 0 24 24" width="24" height="24">
+                    <path fill="currentColor" d="M12,2L7,7H11V13H13V7H17L12,2M17,17H7V15H17V17Z"/>
+                  </svg>
+                  Enable Gyro
+                `;
+                isGyroEnabled = false;
+              }
+            });
           }
-        };
-        this.updateDetailedStatus(completionStats);
-
-        // Keep detailed status visible for a few seconds after completion
-        setTimeout(() => {
-          this.detailedStatus.style.display = 'none';
-          this.progressBar.style.display = 'none';
-          this.statusText.style.display = 'none';
-          this.filenameDisplay.style.display = 'none';
-        }, 5000);
-
-        // Show gallery
-        const gallery = document.querySelector('.gallery-container');
-        if (gallery) {
-          gallery.style.display = 'block';
-          this.uploadContainer.style.display = 'none';
         }
-      } else if (data.status === 'error') {
-        throw new Error(data.message || 'Processing failed');
-      } else {
-        // Continue polling
-        setTimeout(() => this.pollStatus(jobId), 1000);
+
+        previewContainer?.appendChild(videoGrid);
+
+        // Add styles for the video grid and gyro controls
+        const style = document.createElement('style');
+        style.textContent = `
+          .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+          }
+
+          .video-item {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+          }
+
+          .video-item h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #4d9fff;
+          }
+
+          .video-container {
+            position: relative;
+            width: 100%;
+            transform-style: preserve-3d;
+            transition: transform 0.1s ease-out;
+          }
+
+          .video-container video {
+            width: 100%;
+            border-radius: 4px;
+          }
+
+          .gyro-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(77, 159, 255, 0.1);
+            border: 1px solid rgba(77, 159, 255, 0.2);
+            border-radius: 4px;
+            color: #4d9fff;
+            cursor: pointer;
+            transition: all 0.2s ease;
+          }
+
+          .gyro-toggle:hover {
+            background: rgba(77, 159, 255, 0.2);
+          }
+
+          .gyro-toggle.active {
+            background: #4d9fff;
+            color: white;
+          }
+
+          .gyro-toggle svg {
+            width: 20px;
+            height: 20px;
+          }
+
+          @media (max-width: 768px) {
+            .video-grid {
+              grid-template-columns: 1fr;
+            }
+          }
+        `;
+        document.head.appendChild(style);
+
+        this.uploadContainer.appendChild(previewContainer);
+        return true;
       }
+
+      // Continue polling
+      setTimeout(() => this.pollStatus(jobId), 1000);
+      return false;
     } catch (error) {
-      console.error('Status polling error:', error);
-      this.statusText.textContent = `Error: ${error.message}`;
-      this.progressBar.style.width = '0%';
-      this.detailedStatus.style.display = 'none';
+      console.error('Error polling status:', error);
+      this.statusText.textContent = 'Error checking processing status';
+      return true;
     }
   }
 

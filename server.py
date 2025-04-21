@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Simple HTTP server for handling depth map generation requests.
-This server accepts video uploads and returns depth map videos.
+Simple HTTP server for handling depth map and normal map generation requests.
+This server accepts video uploads and returns depth map and normal map videos.
 
 Usage:
     python server.py
@@ -28,379 +28,225 @@ from urllib.parse import parse_qs, urlparse
 PORT = 8000
 UPLOAD_DIR = "uploads"
 VIDEOS_DIR = "videos"
+DEPTH_DIR = os.path.join(VIDEOS_DIR, "depth")
+NORMAL_DIR = os.path.join(VIDEOS_DIR, "normal")
+ORIGINAL_DIR = os.path.join(VIDEOS_DIR, "original")
 CACHE_DIR = "cache"
-SCREENSHOTS_DIR = os.path.join(VIDEOS_DIR, "depth", "screenshots")
+SCREENSHOTS_DIR = os.path.join(VIDEOS_DIR, "screenshots")
 
-# Ensure directories exist
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(VIDEOS_DIR, exist_ok=True)
-os.makedirs(CACHE_DIR, exist_ok=True)
-os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+# Ensure all directories exist
+for directory in [UPLOAD_DIR, VIDEOS_DIR, DEPTH_DIR, NORMAL_DIR, ORIGINAL_DIR, CACHE_DIR, SCREENSHOTS_DIR]:
+    os.makedirs(directory, exist_ok=True)
 
 # Initialize mimetypes
 mimetypes.init()
 
-def get_video_hash(video_data):
-    """Generate a hash for the video data"""
-    return hashlib.sha256(video_data).hexdigest()
-
-def get_cached_video(video_hash, model_type, foreground_method, threshold):
-    """Check if a processed video exists in cache"""
-    cache_key = f"{video_hash}_{model_type}_{foreground_method}_{threshold}"
-    cache_file = os.path.join(CACHE_DIR, f"{cache_key}.mp4")
-    if os.path.exists(cache_file):
-        return cache_file
-    return None
-
-def generate_thumbnail(video_path, output_path, timestamp=0):
-    """Generate a thumbnail from a video at the specified timestamp"""
+def save_video_from_base64(base64_data, output_path):
+    """Save base64 video data to a file"""
     try:
-        cmd = [
-            'ffmpeg',
-            '-i', video_path,
-            '-ss', str(timestamp),
-            '-vframes', '1',
-            '-vf', 'scale=320:-1',
-            '-y',
-            output_path
-        ]
-        subprocess.run(cmd, check=True, capture_output=True)
+        # Remove data URI header if present
+        if ',' in base64_data:
+            base64_data = base64_data.split(',')[1]
+        
+        # Decode and save
+        video_data = base64.b64decode(base64_data)
+        with open(output_path, 'wb') as f:
+            f.write(video_data)
         return True
-    except subprocess.CalledProcessError as e:
-        print(f"Error generating thumbnail: {e}")
+    except Exception as e:
+        print(f"Error saving video: {e}")
         return False
 
-def organize_video_files():
-    """Organize video files into a proper structure"""
-    videos_dir = os.path.join(VIDEOS_DIR, "depth")
-    for filename in os.listdir(videos_dir):
-        if not filename.endswith('.mp4'):
-            continue
-            
-        filepath = os.path.join(videos_dir, filename)
-        if os.path.isfile(filepath):
-            # Generate thumbnail if it doesn't exist
-            thumbnail_name = f"{os.path.splitext(filename)[0]}_thumb.jpg"
-            thumbnail_path = os.path.join(SCREENSHOTS_DIR, thumbnail_name)
-            
-            if not os.path.exists(thumbnail_path):
-                generate_thumbnail(filepath, thumbnail_path)
-
-class DepthMapHandler(BaseHTTPRequestHandler):
-    def _set_headers(self, content_type="application/json"):
+class VideoHandler(BaseHTTPRequestHandler):
+    def serve_static_file(self, file_path):
+        """Serve a static file"""
         try:
-            self.send_response(200)
-            self.send_header("Content-type", content_type)
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
-            self.end_headers()
-        except (BrokenPipeError, ConnectionResetError):
-            print("Client disconnected while sending headers")
-            return
-
-    def serve_file(self, file_path, content_type=None):
-        try:
+            # Get the file extension and mime type
+            ext = os.path.splitext(file_path)[1]
+            mime_type = mimetypes.types_map.get(ext, 'application/octet-stream')
+            
             with open(file_path, 'rb') as f:
                 content = f.read()
-
-            if content_type is None:
-                content_type, _ = mimetypes.guess_type(file_path)
-                if content_type is None:
-                    content_type = 'application/octet-stream'
-
-            try:
-                self._set_headers(content_type)
-                self.wfile.write(content)
-            except BrokenPipeError:
-                print(f"Client disconnected while serving {file_path}")
-                return False
-            except ConnectionResetError:
-                print(f"Connection reset while serving {file_path}")
-                return False
+                
+            self.send_response(200)
+            self.send_header('Content-Type', mime_type)
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
             return True
         except Exception as e:
-            print(f"Error serving file {file_path}: {str(e)}")
+            print(f"Error serving static file: {e}")
             return False
 
-    def do_OPTIONS(self):
-        self._set_headers()
-
-    def do_GET(self):
-        # List processed videos endpoint
-        if self.path == "/list-processed-videos":
-            try:
-                videos = []
-                videos_dir = os.path.join('videos', 'depth')
-                
-                # Organize videos first
-                organize_video_files()
-                
-                # Check if videos directory exists
-                if os.path.exists(videos_dir):
-                    # Get all video files
-                    for filename in os.listdir(videos_dir):
-                        if filename.endswith('.mp4'):
-                            video_path = os.path.join(videos_dir, filename)
-                            stat = os.stat(video_path)
-                            
-                            # Check for thumbnail
-                            thumbnail_name = f"{os.path.splitext(filename)[0]}_thumb.jpg"
-                            thumbnail_path = os.path.join(SCREENSHOTS_DIR, thumbnail_name)
-                            has_thumbnail = os.path.exists(thumbnail_path)
-                            
-                            # Create video entry
-                            video = {
-                                'name': filename,
-                                'url': f'/videos/depth/{filename}',
-                                'size': stat.st_size,
-                                'timestamp': stat.st_mtime,
-                                'is_depth': filename.startswith('depth_'),
-                                'thumbnail_url': f'/videos/depth/screenshots/{thumbnail_name}' if has_thumbnail else None
-                            }
-                            videos.append(video)
-                
-                # Sort videos by timestamp, newest first
-                videos.sort(key=lambda x: x['timestamp'], reverse=True)
-                
-                print(f"Found {len(videos)} videos in {videos_dir}")
-                
-                self._set_headers()
-                self.wfile.write(json.dumps({
-                    'status': 'success',
-                    'videos': videos
-                }).encode())
-                return
-            except Exception as e:
-                print(f"Error listing videos: {str(e)}")
-                self._set_headers()
-                self.wfile.write(json.dumps({
-                    'status': 'error',
-                    'message': str(e)
-                }).encode())
-                return
-
-        # Serve index.html for root path
-        if self.path == "/" or self.path == "/index.html":
-            if not self.serve_file("index.html", "text/html"):
-                self.send_response(404)
-                self.end_headers()
-            return
-
-        # Handle status check requests
-        if self.path.startswith("/status/"):
-            job_id = self.path.split("/")[-1]
-            status_file = os.path.join(UPLOAD_DIR, f"{job_id}.status")
-            log_file = os.path.join(UPLOAD_DIR, f"{job_id}.log")
-
-            if os.path.exists(status_file):
-                try:
-                    # Read status file
-                    with open(status_file, "r") as f:
-                        try:
-                            status_data = json.loads(f.read().strip())
-                        except json.JSONDecodeError:
-                            # Handle old format status files
-                            status_data = {
-                                "status": "processing",
-                                "stage": "processing",
-                                "progress": 50,
-                                "total": 100,
-                                "message": "Processing video..."
-                            }
-                    
-                    # Add log information if available
-                    if os.path.exists(log_file):
-                        try:
-                            with open(log_file, "r") as f:
-                                log_lines = f.readlines()
-                                if log_lines:
-                                    status_data["log"] = log_lines[-1].strip()
-                        except Exception as e:
-                            print(f"Error reading log file: {str(e)}")
-
-                    # If completed, add video URL
-                    if status_data.get("status") == "completed":
-                        depth_video = os.path.join(VIDEOS_DIR, f"{job_id}_depth.mp4")
-                        if os.path.exists(depth_video):
-                            status_data["depth_video_url"] = f"/videos/{job_id}_depth.mp4"
-
-                    self._set_headers()
-                    self.wfile.write(json.dumps(status_data).encode())
-                except Exception as e:
-                    print(f"Error reading status: {str(e)}")
-                    self._set_headers()
-                    self.wfile.write(json.dumps({
-                        "status": "error",
-                        "message": str(e)
-                    }).encode())
-            else:
-                self._set_headers()
-                self.wfile.write(json.dumps({"error": "Job not found"}).encode())
-            return
-
-        # Serve static files (including screenshots)
-        if self.path.startswith("/videos/"):
-            file_path = self.path[1:]  # Remove leading slash
-            if os.path.exists(file_path) and os.path.isfile(file_path):
-                content_type = mimetypes.guess_type(file_path)[0]
-                if not self.serve_file(file_path, content_type):
-                    try:
-                        self.send_response(404)
-                        self.end_headers()
-                    except (BrokenPipeError, ConnectionResetError):
-                        print(f"Client disconnected while sending 404 for {self.path}")
-            else:
-                try:
-                    self.send_response(404)
-                    self.end_headers()
-                except (BrokenPipeError, ConnectionResetError):
-                    print(f"Client disconnected while sending 404 for {self.path}")
-            return
-
-        # Serve other static files (CSS, JS)
-        if self.path.startswith("/css/") or self.path.startswith("/js/"):
-            file_path = self.path[1:]  # Remove leading slash
-            if os.path.exists(file_path) and os.path.isfile(file_path):
-                if not self.serve_file(file_path):
-                    try:
-                        self.send_response(404)
-                        self.end_headers()
-                    except (BrokenPipeError, ConnectionResetError):
-                        print(f"Client disconnected while sending 404 for {self.path}")
-            else:
-                try:
-                    self.send_response(404)
-                    self.end_headers()
-                except (BrokenPipeError, ConnectionResetError):
-                    print(f"Client disconnected while sending 404 for {self.path}")
-            return
-
-        # Default response
-        self._set_headers()
-        self.wfile.write(json.dumps({"status": "Depth Map Generator Server is running"}).encode())
-
     def do_POST(self):
-        try:
-            if self.path == "/generate-depth":
+        """Handle POST requests for video upload and processing"""
+        if self.path == '/upload':
+            try:
+                # Read and parse JSON data
                 content_length = int(self.headers['Content-Length'])
                 post_data = self.rfile.read(content_length)
                 data = json.loads(post_data.decode('utf-8'))
-
-                # Generate a unique ID for this job
+                
+                # Generate unique ID
                 job_id = str(uuid.uuid4())
-
-                # Decode video data
-                video_data = base64.b64decode(data['video'].split(',')[1])
                 
-                # Check cache first
-                video_hash = get_video_hash(video_data)
-                model_type = data.get('model', 'small')
-                foreground_method = data.get('foreground_method', 'bgsubtract')
-                threshold = data.get('threshold', '0.2')
+                # Setup paths
+                original_path = os.path.join(ORIGINAL_DIR, f"{job_id}.mp4")
+                depth_path = os.path.join(DEPTH_DIR, f"{job_id}.mp4")
+                status_file = os.path.join(UPLOAD_DIR, f"{job_id}.status")
                 
-                cached_video = get_cached_video(video_hash, model_type, foreground_method, threshold)
+                # Save original video
+                if not save_video_from_base64(data['video'], original_path):
+                    raise Exception("Failed to save video file")
                 
-                if cached_video:
-                    print(f"Cache hit! Using cached video: {cached_video}")
-                    # Copy cached video to output
-                    output_path = os.path.join(VIDEOS_DIR, f"{job_id}_depth.mp4")
-                    shutil.copy2(cached_video, output_path)
-                    
-                    # Return immediate completion
-                    self._set_headers()
-                    self.wfile.write(json.dumps({
-                        "job_id": job_id,
-                        "status": "completed",
-                        "depth_video_url": f"/videos/{job_id}_depth.mp4"
-                    }).encode())
-                    return
-
-                # No cache hit, process normally
-                input_path = os.path.join(UPLOAD_DIR, f"{job_id}.mp4")
-                output_path = os.path.join(VIDEOS_DIR, f"{job_id}_depth.mp4")
-
-                with open(input_path, "wb") as f:
-                    f.write(video_data)
-
-                # Create status file
-                status_data = {
+                # Create initial status
+                initial_status = {
                     "status": "processing",
-                    "stage": "initializing",
+                    "stage": "starting",
+                    "message": "Starting video processing...",
                     "progress": 0,
-                    "total": 100,
-                    "message": "Starting video processing..."
+                    "total": 100
                 }
-                with open(os.path.join(UPLOAD_DIR, f"{job_id}.status"), "w") as f:
-                    json.dump(status_data, f)
-
-                # Start depth map generation in a separate process
-                cache_key = f"{video_hash}_{model_type}_{foreground_method}_{threshold}"
-                cache_output = os.path.join(CACHE_DIR, f"{cache_key}.mp4")
-
+                with open(status_file, 'w') as f:
+                    json.dump(initial_status, f)
+                
+                # Start processing
                 cmd = [
-                    sys.executable,
-                    "gen_depth.py",
-                    "--input", input_path,
-                    "--output", cache_output,  # Output to cache first
-                    "--model", model_type,
-                    "--foreground-method", foreground_method,
-                    "--threshold", threshold,
-                    "--status-file", os.path.join(UPLOAD_DIR, f"{job_id}.status")
+                    'python3', 'gen_depth.py',
+                    '--input', original_path,
+                    '--output', depth_path,
+                    '--status-file', status_file
                 ]
-
-                def on_complete():
-                    """Callback when processing completes"""
-                    if os.path.exists(cache_output):
-                        # Copy from cache to output
-                        shutil.copy2(cache_output, output_path)
-
-                # Run the process in the background
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=open(os.path.join(UPLOAD_DIR, f"{job_id}.log"), "w"),
-                    stderr=subprocess.STDOUT,
-                    bufsize=1,  # Line buffered
-                    universal_newlines=True  # Text mode
-                )
-
-                # Return the job ID to the client
-                try:
-                    self._set_headers()
-                    self.wfile.write(json.dumps({
-                        "job_id": job_id,
-                        "status": "processing"
-                    }).encode())
-                except (BrokenPipeError, ConnectionResetError):
-                    print(f"Client disconnected while sending response for job {job_id}")
-
-            else:
-                try:
-                    self.send_response(404)
-                    self.end_headers()
-                except (BrokenPipeError, ConnectionResetError):
-                    print(f"Client disconnected while sending 404 for {self.path}")
-        
-        except (BrokenPipeError, ConnectionResetError):
-            print(f"Client disconnected during POST request processing for {self.path}")
-        except Exception as e:
-            print(f"Error processing POST request: {str(e)}")
-            try:
-                self.send_response(500)
+                
+                # Add optional parameters
+                if 'model' in data:
+                    cmd.extend(['--model', data['model']])
+                if 'foreground_method' in data:
+                    cmd.extend(['--foreground-method', data['foreground_method']])
+                if 'threshold' in data:
+                    cmd.extend(['--threshold', str(data['threshold'])])
+                
+                # Start processing in background
+                subprocess.Popen(cmd)
+                
+                # Return success response
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode())
-            except (BrokenPipeError, ConnectionResetError):
-                print("Client disconnected while sending error response")
+                self.wfile.write(json.dumps({
+                    'status': 'success',
+                    'job_id': job_id,
+                    'message': 'Processing started'
+                }).encode())
+                return
+                
+            except Exception as e:
+                print(f"Error processing upload: {e}")
+                self.send_error(500, str(e))
+                return
+
+        self.send_error(404, "Path not found")
+
+    def do_GET(self):
+        """Handle GET requests"""
+        # Serve index.html for root path
+        if self.path == '/' or self.path == '':
+            if self.serve_static_file('index.html'):
+                return
+                
+        # Serve static files
+        if self.path.endswith(('.html', '.js', '.css', '.png', '.jpg', '.jpeg', '.gif')):
+            file_path = self.path.lstrip('/')
+            if os.path.exists(file_path) and self.serve_static_file(file_path):
+                return
+                
+        # Handle status check
+        if self.path.startswith('/status/'):
+            job_id = self.path.split('/')[-1]
+            status_file = os.path.join(UPLOAD_DIR, f"{job_id}.status")
+            
+            if os.path.exists(status_file):
+                try:
+                    with open(status_file, 'r') as f:
+                        status = json.load(f)
+                    
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(status).encode())
+                    return
+                except Exception as e:
+                    print(f"Error reading status file: {e}")
+                    self.send_error(500, f"Error reading status: {str(e)}")
+                    return
+            else:
+                self.send_error(404, "Status not found")
+                return
+                
+        # Serve video files
+        elif self.path.startswith('/videos/'):
+            video_path = os.path.join('.', self.path.lstrip('/'))
+            if os.path.exists(video_path):
+                try:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'video/mp4')
+                    self.send_header('Content-Length', str(os.path.getsize(video_path)))
+                    self.end_headers()
+                    with open(video_path, 'rb') as f:
+                        shutil.copyfileobj(f, self.wfile)
+                    return
+                except Exception as e:
+                    print(f"Error serving video: {e}")
+                    self.send_error(500, f"Error serving video: {str(e)}")
+                    return
+                
+        # List available videos
+        elif self.path == '/api/videos':
+            try:
+                videos = []
+                # Look for video sets in the directories
+                for filename in os.listdir(ORIGINAL_DIR):
+                    if filename.endswith('.mp4'):
+                        video_id = os.path.splitext(filename)[0]
+                        original_path = os.path.join(ORIGINAL_DIR, filename)
+                        depth_path = os.path.join(DEPTH_DIR, filename)
+                        normal_path = os.path.join(NORMAL_DIR, filename)
+                        
+                        if os.path.exists(original_path):
+                            video_stat = os.stat(original_path)
+                            video_info = {
+                                'name': filename,
+                                'url': f'/videos/original/{filename}',
+                                'size': video_stat.st_size,
+                                'timestamp': video_stat.st_mtime
+                            }
+                            
+                            # Add depth/normal paths if they exist
+                            if os.path.exists(depth_path):
+                                video_info['depth_url'] = f'/videos/depth/{filename}'
+                            if os.path.exists(normal_path):
+                                video_info['normal_url'] = f'/videos/normal/{filename}'
+                                
+                            videos.append(video_info)
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'videos': videos}).encode())
+                return
+            except Exception as e:
+                print(f"Error listing videos: {e}")
+                self.send_error(500, f"Error listing videos: {str(e)}")
+                return
+                
+        self.send_error(404, "Path not found")
 
 def run_server():
-    server_address = ('0.0.0.0', PORT)
-    httpd = HTTPServer(server_address, DepthMapHandler)
-    print(f"Starting depth map generator server on port {PORT}...")
-    print(f"Local access: http://localhost:{PORT}")
-    print(f"To access from other devices on your network, find your computer's IP address")
-    print(f"On macOS/Linux, use: ifconfig | grep 'inet '")
-    print(f"On Windows, use: ipconfig")
+    """Start the HTTP server"""
+    server_address = ('', PORT)
+    httpd = HTTPServer(server_address, VideoHandler)
+    print(f"Server running on port {PORT}")
     httpd.serve_forever()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     run_server()

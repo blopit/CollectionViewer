@@ -416,7 +416,7 @@ export class VideoUploader {
       this.progressBar.style.width = '30%';
 
       // Send to server
-      const response = await fetch('/generate-depth', {
+      const response = await fetch('/upload', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

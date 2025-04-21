@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3D Video with Depth & Normal Maps</title>
+  <style>
+    body { margin:0; overflow:hidden; font-family: Arial, sans-serif; background: #1a1a1a; }
+    canvas { display:block; }
+    #debug { 
+      position: absolute; 
+      top: 10px; 
+      left: 10px; 
+      background: rgba(0,0,0,0.7); 
+      color: white; 
+      padding: 10px; 
+      border-radius: 5px;
+      z-index: 100;
+      max-width: 80%;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+    #start-button {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 15px 30px;
+      background: #2196F3;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+      cursor: pointer;
+      z-index: 10;
+    }
+    #video-preview {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      display: flex;
+      gap: 10px;
+      z-index: 100;
+    }
+    #video-preview video {
+      width: 160px;
+      height: 90px;
+      border: 2px solid white;
+      border-radius: 4px;
+      display: block !important;
+    }
+    .controls {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0,0,0,0.7);
+      padding: 10px;
+      border-radius: 5px;
+      z-index: 100;
+      min-width: 200px;
+    }
+    .controls label {
+      color: white;
+      display: block;
+      margin: 5px 0;
+    }
+    .controls input {
+      width: 100%;
+    }
+    .controls .value {
+      color: #2196F3;
+      float: right;
+      font-family: monospace;
+    }
+    .control-mode {
+      color: #4CAF50;
+      font-size: 12px;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="debug">Status: Loading videos...</div>
+  <button id="start-button">Start 3D Video</button>
+  
+  <div id="video-preview">
+    <video id="videoColor" muted playsinline loop src="videos/depth/video_1745273322.mp4"></video>
+    <video id="videoDepth" muted playsinline loop src="videos/depth/depth_video_1745273322.mp4"></video>
+    <video id="videoNormal" muted playsinline loop src="videos/depth/normal_video_1745273322.mp4"></video>
+  </div>
+
+  <div class="controls">
+    <div class="control-mode">Using Mouse Controls</div>
+    <label>
+      Displacement Scale
+      <span class="value">0.20</span>
+      <input type="range" id="displacementScale" min="0" max="1" step="0.01" value="0.2">
+    </label>
+    <label>
+      Camera Z
+      <span class="value">2.0</span>
+      <input type="range" id="cameraZ" min="0.5" max="5" step="0.1" value="2">
+    </label>
+    <label>
+      Clearcoat
+      <span class="value">1.0</span>
+      <input type="range" id="clearcoat" min="0" max="1" step="0.01" value="1">
+    </label>
+    <label>
+      Clearcoat Roughness
+      <span class="value">0.1</span>
+      <input type="range" id="clearcoatRoughness" min="0" max="1" step="0.01" value="0.1">
+    </label>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+    const debug = document.getElementById('debug');
+    const startButton = document.getElementById('start-button');
+    let scene, camera, renderer, mesh;
+    let mouseX = 0, mouseY = 0;
+    let targetX = 0, targetY = 0;
+    
+    function log(message) {
+      debug.textContent += '\n' + message;
+      console.log(message);
+      debug.scrollTop = debug.scrollHeight;
+    }
+    
+    // Check WebGL capabilities
+    function checkWebGL() {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+      if (!gl) {
+        throw new Error('WebGL not supported');
+      }
+      log(`Using ${gl instanceof WebGL2RenderingContext ? 'WebGL 2.0' : 'WebGL 1.0'}`);
+      return gl;
+    }
+    
+    // Check if videos are loaded
+    const videoElements = {
+      color: document.getElementById('videoColor'),
+      depth: document.getElementById('videoDepth'),
+      normal: document.getElementById('videoNormal')
+    };
+    
+    // Log video load status
+    for (const [key, video] of Object.entries(videoElements)) {
+      log(`${key} video source: ${video.src}`);
+      
+      video.addEventListener('error', (e) => {
+        log(`Error loading ${key} video: ${e.target.error?.message || 'Unknown error'}`);
+        console.error(`${key} video error:`, e.target.error);
+      });
+      
+      video.addEventListener('loadeddata', () => {
+        log(`${key} video loaded successfully (${video.videoWidth}x${video.videoHeight})`);
+      });
+      
+      ['loadstart', 'canplay', 'playing', 'waiting', 'stalled'].forEach(event => {
+        video.addEventListener(event, () => log(`${key} video event: ${event}`));
+      });
+    }
+
+    // Start everything when button is clicked
+    startButton.addEventListener('click', async () => {
+      log('Starting initialization...');
+      
+      try {
+        // Check WebGL support
+        checkWebGL();
+        
+        // Start videos
+        for (const [key, video] of Object.entries(videoElements)) {
+          log(`Attempting to play ${key} video...`);
+          try {
+            await video.play();
+            log(`${key} video playing`);
+          } catch (e) {
+            log(`Error playing ${key} video: ${e.message}`);
+            console.error(e);
+          }
+        }
+        
+        startButton.style.display = 'none';
+        initScene();
+      } catch (error) {
+        log(`Error during initialization: ${error.message}`);
+        console.error(error);
+      }
+    });
+
+    function initScene() {
+      log('Initializing 3D scene...');
+      
+      try {
+        // 1. Renderer & Scene
+        renderer = new THREE.WebGLRenderer({ 
+          antialias: true,
+          powerPreference: "high-performance",
+          alpha: true
+        });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.physicallyCorrectLights = true;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1;
+        log(`Renderer capabilities: ${JSON.stringify(renderer.capabilities, null, 2)}`);
+        
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        log('Renderer created with physical lights');
+
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+        
+        camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 100);
+        camera.position.z = 2;
+        log('Camera setup complete');
+
+        // 2. Lights for better clearcoat visibility
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 5, 5);
+        scene.add(dirLight);
+
+        const pointLight1 = new THREE.PointLight(0xff0000, 1);
+        pointLight1.position.set(-2, 2, 2);
+        scene.add(pointLight1);
+
+        const pointLight2 = new THREE.PointLight(0x0000ff, 1);
+        pointLight2.position.set(2, -2, 2);
+        scene.add(pointLight2);
+        
+        log('Enhanced lighting setup complete');
+
+        // 3. Video textures with proper encoding
+        const colorTex = new THREE.VideoTexture(videoElements.color);
+        colorTex.encoding = THREE.sRGBEncoding;
+        colorTex.minFilter = THREE.LinearFilter;
+        colorTex.magFilter = THREE.LinearFilter;
+        
+        const depthTex = new THREE.VideoTexture(videoElements.depth);
+        depthTex.encoding = THREE.LinearEncoding;
+        
+        const normalTex = new THREE.VideoTexture(videoElements.normal);
+        normalTex.encoding = THREE.LinearEncoding;
+        
+        log('Video textures created with correct encoding');
+
+        // 4. Geometry with high subdivisions
+        const geo = new THREE.PlaneGeometry(16/9, 1, 256, 256);
+        log(`Geometry created with ${geo.attributes.position.count} vertices`);
+
+        // 5. Material: physical material with clearcoat
+        const mat = new THREE.MeshPhysicalMaterial({
+          map: colorTex,
+          displacementMap: depthTex,
+          displacementScale: 0.2,
+          displacementBias: 0,
+          normalMap: normalTex,
+          normalScale: new THREE.Vector2(1, 1),
+          side: THREE.DoubleSide,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.1,
+          clearcoatNormalScale: new THREE.Vector2(0.3, 0.3),
+          roughness: 0.3,
+          metalness: 0.8,
+          reflectivity: 1.0,
+          envMapIntensity: 1.0,
+          flatShading: false
+        });
+        
+        // Log material properties
+        log(`Material properties: ${JSON.stringify({
+          clearcoat: mat.clearcoat,
+          clearcoatRoughness: mat.clearcoatRoughness,
+          roughness: mat.roughness,
+          metalness: mat.metalness
+        }, null, 2)}`);
+
+        mesh = new THREE.Mesh(geo, mat);
+        scene.add(mesh);
+        log('Mesh added to scene');
+
+        // Add control sliders with value display
+        const displacementSlider = document.getElementById('displacementScale');
+        const cameraZSlider = document.getElementById('cameraZ');
+        const clearcoatSlider = document.getElementById('clearcoat');
+        const clearcoatRoughnessSlider = document.getElementById('clearcoatRoughness');
+        
+        function updateSliderValue(slider, value) {
+          slider.parentElement.querySelector('.value').textContent = value.toFixed(2);
+        }
+        
+        displacementSlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          mat.displacementScale = value;
+          updateSliderValue(displacementSlider, value);
+          log(`Displacement scale: ${value}`);
+        });
+
+        cameraZSlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          camera.position.z = value;
+          updateSliderValue(cameraZSlider, value);
+          log(`Camera Z: ${value}`);
+        });
+
+        clearcoatSlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          mat.clearcoat = value;
+          updateSliderValue(clearcoatSlider, value);
+          log(`Clearcoat: ${value}`);
+        });
+
+        clearcoatRoughnessSlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          mat.clearcoatRoughness = value;
+          updateSliderValue(clearcoatRoughnessSlider, value);
+          log(`Clearcoat roughness: ${value}`);
+        });
+
+        // Initialize slider values
+        updateSliderValue(displacementSlider, 0.2);
+        updateSliderValue(cameraZSlider, 2.0);
+        updateSliderValue(clearcoatSlider, 1.0);
+        updateSliderValue(clearcoatRoughnessSlider, 0.1);
+
+        // Animation loop with smooth camera movement
+        function animate() {
+          requestAnimationFrame(animate);
+          
+          // Smooth mouse/touch movement
+          mouseX += (targetX - mouseX) * 0.05;
+          mouseY += (targetY - mouseY) * 0.05;
+          
+          // Update camera position
+          const sensitivity = 0.0005;
+          camera.position.x = Math.sin(mouseX * sensitivity) * 2;
+          camera.position.y = -Math.sin(mouseY * sensitivity) * 2;
+          camera.lookAt(scene.position);
+          
+          // Rotate mesh slightly to show clearcoat
+          mesh.rotation.y = Math.sin(Date.now() * 0.001) * 0.1;
+          
+          renderer.render(scene, camera);
+        }
+        animate();
+        log('Animation loop started with mouse/touch controls');
+
+        // Handle resize
+        window.addEventListener('resize', () => {
+          camera.aspect = window.innerWidth/window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Mouse controls
+        document.addEventListener('mousemove', (event) => {
+          targetX = (event.clientX - window.innerWidth/2) * 2;
+          targetY = (event.clientY - window.innerHeight/2) * 2;
+        });
+
+        // Touch controls
+        document.addEventListener('touchmove', (event) => {
+          event.preventDefault();
+          targetX = (event.touches[0].clientX - window.innerWidth/2) * 2;
+          targetY = (event.touches[0].clientY - window.innerHeight/2) * 2;
+        }, { passive: false });
+        
+        // Keep debug visible but reduce opacity after 10 seconds
+        setTimeout(() => {
+          debug.style.opacity = '0.5';
+        }, 10000);
+        
+        log('Scene initialization complete!');
+      } catch (error) {
+        log(`Error in scene initialization: ${error.message}`);
+        console.error(error);
+      }
+    }
+  </script>
+</body>
+</html> 
