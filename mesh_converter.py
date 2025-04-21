@@ -29,46 +29,76 @@ from pathlib import Path
 
 def convert_depth_to_mesh_open3d(depth_image_path, output_path, inpaint=True):
     """Convert a depth image to a 3D mesh using Open3D."""
-    print("Converting {} to mesh...".format(depth_image_path))
-    
-    # Load depth image
-    depth_img = np.array(Image.open(depth_image_path))
-    
-    # Normalize depth if needed (assuming depth is in range 0-255 or 0-65535)
-    if depth_img.dtype == np.uint8:
-        depth_img = depth_img.astype(np.float32) / 255.0
-    elif depth_img.dtype == np.uint16:
-        depth_img = depth_img.astype(np.float32) / 65535.0
-    
-    # Create depth image for Open3D
-    depth = o3d.geometry.Image(depth_img)
-    
-    # Camera intrinsic parameters (estimate based on image size)
-    width, height = depth_img.shape[1], depth_img.shape[0]
-    fx = width * 0.8  # approximate focal length
-    fy = height * 0.8
-    cx = width / 2
-    cy = height / 2
-    intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy)
-    
-    # Create point cloud from depth image
-    pcd = o3d.geometry.PointCloud.create_from_depth_image(
-        depth, intrinsic, depth_scale=1.0, depth_trunc=1.0
-    )
-    
-    # Estimate normals for better mesh reconstruction
-    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-    pcd.orient_normals_towards_camera_location()
-    
-    # Create mesh with Poisson surface reconstruction
-    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-        pcd, depth=9, width=0, scale=1.1, linear_fit=True
-    )
-    
-    # Save the mesh
-    o3d.io.write_triangle_mesh(output_path, mesh)
-    print("Mesh saved to {}".format(output_path))
-    return mesh
+    try:
+        print("Converting {} to mesh...".format(depth_image_path))
+        
+        # Load depth image
+        depth_img = np.array(Image.open(depth_image_path))
+        print(f"Loaded depth image shape: {depth_img.shape}, dtype: {depth_img.dtype}")
+        
+        # Ensure the image is 2D
+        if len(depth_img.shape) > 2:
+            depth_img = depth_img[:,:,0]  # Take first channel if multi-channel
+        
+        # Normalize depth if needed (assuming depth is in range 0-255 or 0-65535)
+        if depth_img.dtype == np.uint8:
+            depth_img = depth_img.astype(np.float32) / 255.0
+        elif depth_img.dtype == np.uint16:
+            depth_img = depth_img.astype(np.float32) / 65535.0
+            
+        # Flip the depth values if they appear inverted
+        if depth_img.mean() > 0.5:
+            depth_img = 1.0 - depth_img
+        
+        print(f"Normalized depth range: {depth_img.min():.3f} to {depth_img.max():.3f}")
+        
+        # Create a simple vertex grid
+        rows, cols = depth_img.shape
+        vertices = []
+        triangles = []
+        
+        # Create vertices
+        for i in range(rows):
+            for j in range(cols):
+                # Convert pixel coordinates to 3D space
+                x = (j - cols/2) / cols
+                y = (rows/2 - i) / rows
+                z = depth_img[i,j]
+                vertices.append([x, y, z])
+        
+        # Create triangles (faces)
+        for i in range(rows-1):
+            for j in range(cols-1):
+                # Get vertex indices
+                v0 = i * cols + j
+                v1 = v0 + 1
+                v2 = (i+1) * cols + j
+                v3 = v2 + 1
+                
+                # Create two triangles for each quad
+                triangles.append([v0, v2, v1])
+                triangles.append([v1, v2, v3])
+        
+        # Create mesh
+        mesh = o3d.geometry.TriangleMesh()
+        mesh.vertices = o3d.utility.Vector3dVector(np.array(vertices))
+        mesh.triangles = o3d.utility.Vector3iVector(np.array(triangles))
+        
+        # Compute vertex normals
+        mesh.compute_vertex_normals()
+        
+        print(f"Created mesh with {len(mesh.vertices)} vertices and {len(mesh.triangles)} triangles")
+        
+        # Save the mesh
+        o3d.io.write_triangle_mesh(output_path, mesh)
+        print("Mesh saved to {}".format(output_path))
+        return mesh
+        
+    except Exception as e:
+        print(f"Error converting depth to mesh: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def convert_depth_to_mesh_dtm(depth_image_path, output_path):
     """Convert a depth image to a 3D mesh using depth-to-mesh library."""

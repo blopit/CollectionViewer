@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Mesh Viewer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #canvas-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 300px;
+            font-size: 14px;
+        }
+        #controls-panel {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 8px 12px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 18px;
+            text-align: center;
+        }
+        #mesh-selector {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        select {
+            padding: 5px;
+            border-radius: 3px;
+            background-color: #333;
+            color: white;
+            border: 1px solid #555;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    
+    <div id="info-panel">
+        <h2>3D Mesh Viewer</h2>
+        <p>This viewer displays 3D meshes generated from depth maps of video frames.</p>
+        <p>Controls:</p>
+        <ul>
+            <li>Left-click + drag: Rotate</li>
+            <li>Right-click + drag: Pan</li>
+            <li>Scroll: Zoom</li>
+        </ul>
+    </div>
+    
+    <div id="mesh-selector">
+        <label for="mesh-select">Select Frame:</label>
+        <select id="mesh-select">
+            <!-- Options will be populated by JavaScript -->
+        </select>
+    </div>
+    
+    <div id="controls-panel">
+        <button id="reset-view-btn">Reset View</button>
+        <button id="wireframe-btn">Toggle Wireframe</button>
+        <button id="auto-rotate-btn">Toggle Auto-Rotate</button>
+    </div>
+    
+    <div id="loading">Loading 3D Mesh... Please wait.</div>
+
+    <!-- Three.js library -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/PLYLoader.js"></script>
+    
+    <script>
+        // Global variables
+        let scene, camera, renderer, controls;
+        let currentMesh = null;
+        let isWireframe = false;
+        let isAutoRotating = false;
+        
+        // Available mesh frames
+        const meshFrames = [
+            { value: "frame_000000", label: "Frame 1" },
+            { value: "frame_000006", label: "Frame 2" },
+            { value: "frame_000012", label: "Frame 3" },
+            { value: "frame_000018", label: "Frame 4" },
+            { value: "frame_000024", label: "Frame 5" },
+            { value: "frame_000030", label: "Frame 6" },
+            { value: "frame_000036", label: "Frame 7" },
+            { value: "frame_000042", label: "Frame 8" },
+            { value: "frame_000048", label: "Frame 9" },
+            { value: "frame_000054", label: "Frame 10" }
+        ];
+        
+        // Initialize the scene
+        function init() {
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111111);
+            
+            // Create camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+            
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+            
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+            
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight2.position.set(-1, -1, -1);
+            scene.add(directionalLight2);
+            
+            // Add controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            
+            // Populate mesh selector
+            const meshSelect = document.getElementById('mesh-select');
+            meshFrames.forEach(frame => {
+                const option = document.createElement('option');
+                option.value = frame.value;
+                option.textContent = frame.label;
+                meshSelect.appendChild(option);
+            });
+            
+            // Add event listeners
+            window.addEventListener('resize', onWindowResize);
+            document.getElementById('reset-view-btn').addEventListener('click', resetView);
+            document.getElementById('wireframe-btn').addEventListener('click', toggleWireframe);
+            document.getElementById('auto-rotate-btn').addEventListener('click', toggleAutoRotate);
+            meshSelect.addEventListener('change', loadSelectedMesh);
+            
+            // Load initial mesh
+            loadMesh('frame_000000');
+            
+            // Start animation loop
+            animate();
+        }
+        
+        // Load a mesh from file
+        function loadMesh(frameId) {
+            const loader = new THREE.PLYLoader();
+            const meshPath = `output_inpainting/mesh/video/${frameId}.ply`;
+            
+            document.getElementById('loading').style.display = 'block';
+            
+            // Configure loader for binary files
+            loader.setPropertyNameMapping({
+                'vertex_indices': 'vertexIndices',
+                'vertex_index': 'vertexIndices',
+                'x': 'position',
+                'y': 'position',
+                'z': 'position',
+                'red': 'color',
+                'green': 'color',
+                'blue': 'color'
+            });
+            
+            loader.load(
+                meshPath,
+                function(geometry) {
+                    // Remove previous mesh if exists
+                    if (currentMesh) {
+                        scene.remove(currentMesh);
+                    }
+                    
+                    // Create material
+                    const material = new THREE.MeshStandardMaterial({
+                        color: 0xffffff,
+                        vertexColors: true,
+                        flatShading: false,
+                        wireframe: isWireframe
+                    });
+                    
+                    // Create mesh
+                    const mesh = new THREE.Mesh(geometry, material);
+                    
+                    // Center the geometry
+                    geometry.computeBoundingBox();
+                    const center = geometry.boundingBox.getCenter(new THREE.Vector3());
+                    mesh.position.x = -center.x;
+                    mesh.position.y = -center.y;
+                    mesh.position.z = -center.z;
+                    
+                    // Scale the mesh to fit in view
+                    const size = geometry.boundingBox.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    const scale = 5 / maxDim;
+                    mesh.scale.multiplyScalar(scale);
+                    
+                    // Add to scene
+                    scene.add(mesh);
+                    currentMesh = mesh;
+                    
+                    // Hide loading indicator
+                    document.getElementById('loading').style.display = 'none';
+                    
+                    // Reset view
+                    resetView();
+                },
+                function(xhr) {
+                    // Progress callback
+                    const percent = Math.round((xhr.loaded / xhr.total) * 100);
+                    document.getElementById('loading').textContent = `Loading: ${percent}%`;
+                },
+                function(error) {
+                    // Error callback
+                    console.error('Error loading mesh:', error);
+                    let errorMessage = 'Error loading mesh. ';
+                    
+                    if (error.target && error.target.status === 404) {
+                        errorMessage += 'File not found. ';
+                    } else if (error.message) {
+                        errorMessage += error.message;
+                    }
+                    
+                    errorMessage += 'Please try another frame.';
+                    document.getElementById('loading').textContent = errorMessage;
+                    
+                    // Try to load the next available frame
+                    const select = document.getElementById('mesh-select');
+                    const currentIndex = Array.from(select.options).findIndex(opt => opt.value === frameId);
+                    if (currentIndex >= 0 && currentIndex < select.options.length - 1) {
+                        select.selectedIndex = currentIndex + 1;
+                        loadMesh(select.options[select.selectedIndex].value);
+                    }
+                }
+            );
+        }
+        
+        // Load the selected mesh
+        function loadSelectedMesh() {
+            const select = document.getElementById('mesh-select');
+            loadMesh(select.value);
+        }
+        
+        // Reset camera view
+        function resetView() {
+            if (currentMesh) {
+                controls.reset();
+                camera.position.z = 5;
+            }
+        }
+        
+        // Toggle wireframe mode
+        function toggleWireframe() {
+            if (currentMesh) {
+                isWireframe = !isWireframe;
+                currentMesh.material.wireframe = isWireframe;
+            }
+        }
+        
+        // Toggle auto-rotation
+        function toggleAutoRotate() {
+            isAutoRotating = !isAutoRotating;
+            controls.autoRotate = isAutoRotating;
+            
+            const btn = document.getElementById('auto-rotate-btn');
+            btn.textContent = isAutoRotating ? 'Stop Rotation' : 'Toggle Auto-Rotate';
+        }
+        
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        // Initialize when the page loads
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

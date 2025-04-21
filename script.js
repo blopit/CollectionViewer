@@ -68,6 +68,7 @@ function initModelSelector() {
     
     // Add model options
     const modelOptions = [
+        { value: 'test_shape.ply', label: 'Test Shape (PLY)' },
         { value: 'model.glb', label: 'Flight Helmet' },
         { value: 'drone.glb', label: 'Drone' },
         { value: 'duck.glb', label: 'Duck' },
@@ -232,74 +233,59 @@ function tryLoadModelSequence(modelFiles, index, startTime) {
 // Load a PLY model
 function loadPLYModel(modelPath, startTime, onError) {
     const loader = new THREE.PLYLoader();
-    
     loader.load(
         modelPath,
         (geometry) => {
-            loadingElement.innerHTML = 'Processing PLY geometry...';
+            // Center the geometry
+            geometry.center();
+            
+            // Compute vertex normals if they don't exist
+            if (!geometry.hasAttribute('normal')) {
+                geometry.computeVertexNormals();
+            }
             
             // Create material
             const material = new THREE.MeshStandardMaterial({
-                color: 0x888888,
-                flatShading: true
+                color: 0x808080,
+                metalness: 0.5,
+                roughness: 0.5,
+                vertexColors: geometry.hasAttribute('color')
             });
             
             // Create mesh
             mesh = new THREE.Mesh(geometry, material);
             
-            // Center the model
-            geometry.computeBoundingBox();
-            const box = geometry.boundingBox;
-            const center = new THREE.Vector3();
-            box.getCenter(center);
-            mesh.position.x = -center.x;
-            mesh.position.y = -center.y;
-            mesh.position.z = -center.z;
+            // Scale the mesh to fit in view
+            const box = new THREE.Box3().setFromObject(mesh);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scale = 5 / maxDim;
+            mesh.scale.multiplyScalar(scale);
             
-            // Compute vertex normals if they don't exist
-            if (!geometry.attributes.normal) {
-                geometry.computeVertexNormals();
-            }
-            
-            loadingElement.innerHTML = 'Adding model to scene...';
+            // Add to scene
             scene.add(mesh);
             
-            loadingElement.innerHTML = 'Calculating model statistics...';
+            // Update loading info
+            const loadTime = ((performance.now() - startTime) / 1000).toFixed(2);
+            loadingElement.innerHTML = `Load time: ${loadTime}s`;
+            loadingElement.style.display = 'none';
+            isLoading = false;
             
-            // Update model information
+            // Update model info
             updatePLYModelInfo(geometry);
             
-            const loadTime = ((performance.now() - startTime) / 1000).toFixed(2);
-            console.log(`PLY model loaded in ${loadTime} seconds`);
-            
-            isLoading = false;
-            loadingElement.style.display = 'none';
+            // Reset view
+            resetView();
         },
         (xhr) => {
-            // Loading progress with detailed information
-            const percentComplete = (xhr.loaded / xhr.total) * 100;
-            const loadedMB = (xhr.loaded / (1024 * 1024)).toFixed(2);
-            const totalMB = (xhr.total / (1024 * 1024)).toFixed(2);
-            const timeElapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-            
-            // Calculate estimated time remaining
-            let timeRemaining = "calculating...";
-            if (xhr.loaded > 0 && percentComplete > 0) {
-                const bytesPerSecond = xhr.loaded / timeElapsed;
-                const secondsRemaining = (xhr.total - xhr.loaded) / bytesPerSecond;
-                timeRemaining = secondsRemaining > 60 
-                    ? `${(secondsRemaining / 60).toFixed(1)} minutes`
-                    : `${secondsRemaining.toFixed(0)} seconds`;
-            }
-            
-            loadingElement.innerHTML = `
-                <div>Loading PLY model: ${Math.round(percentComplete)}%</div>
-                <div>${loadedMB} MB / ${totalMB} MB</div>
-                <div>Time elapsed: ${timeElapsed}s</div>
-                <div>Est. remaining: ${timeRemaining}</div>
-            `;
+            const percent = (xhr.loaded / xhr.total * 100).toFixed(0);
+            loadingElement.innerHTML = `Loading PLY: ${percent}%`;
         },
-        onError
+        (error) => {
+            console.error('Error loading PLY:', error);
+            loadingElement.innerHTML = `<div>Error loading PLY model: ${error.message}</div>`;
+            if (onError) onError();
+        }
     );
 }
 
@@ -390,20 +376,19 @@ function loadGLTFModel(modelPath, startTime, onError) {
 
 // Update model information for PLY models
 function updatePLYModelInfo(geometry) {
-    const modelInfo = document.querySelector('#model-info');
-    
+    const modelInfo = document.getElementById('model-info');
     if (!modelInfo) return;
     
-    // Calculate vertices and faces
-    const vertexCount = geometry.attributes.position.count;
-    const faceCount = geometry.index ? geometry.index.count / 3 : vertexCount / 3;
+    const vertices = geometry.getAttribute('position').count;
+    const faces = geometry.index ? geometry.index.count / 3 : vertices / 3;
+    const hasColors = geometry.hasAttribute('color');
+    const hasNormals = geometry.hasAttribute('normal');
     
-    // Update info box
     modelInfo.innerHTML = `
-        <p><strong>Model Type:</strong> PLY</p>
-        <p><strong>Vertices:</strong> ${vertexCount.toLocaleString()}</p>
-        <p><strong>Faces:</strong> ${Math.round(faceCount).toLocaleString()}</p>
-        <p><strong>Model loaded from depth map</strong></p>
+        <div>Vertices: ${vertices.toLocaleString()}</div>
+        <div>Faces: ${faces.toLocaleString()}</div>
+        <div>Vertex Colors: ${hasColors ? 'Yes' : 'No'}</div>
+        <div>Vertex Normals: ${hasNormals ? 'Yes' : 'No'}</div>
     `;
 }
 

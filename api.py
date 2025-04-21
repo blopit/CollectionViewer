@@ -15,7 +15,7 @@ import io
 import uuid
 import tempfile
 from pathlib import Path
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from PIL import Image
 import numpy as np
 
@@ -23,24 +23,34 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from mesh_converter import convert_depth_to_mesh_open3d
 
-# Initialize Flask app
-app = Flask(__name__, static_folder='.')
+# Initialize Flask app with static folder configuration
+app = Flask(__name__, static_url_path='')
 app.config['UPLOAD_FOLDER'] = 'uploaded_models'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
 
-# Create upload directory if it doesn't exist
+# Create required directories if they don't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs('depth_images', exist_ok=True)
 
 @app.route('/')
 def index():
     """Serve the index.html file."""
-    return send_from_directory('.', 'index.html')
+    return send_file('index.html')
 
-@app.route('/upload', methods=['GET'])
+@app.route('/upload')
 def upload_page():
     """Serve the upload.html file."""
-    return send_from_directory('.', 'upload.html')
+    return send_file('upload.html')
+
+@app.route('/styles.css')
+def serve_css():
+    """Serve the CSS file."""
+    return send_file('styles.css')
+
+@app.route('/script.js')
+def serve_js():
+    """Serve the JavaScript file."""
+    return send_file('script.js')
 
 @app.route('/api/convert-depth', methods=['POST'])
 def convert_depth():
