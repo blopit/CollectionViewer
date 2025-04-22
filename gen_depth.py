@@ -53,8 +53,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Generate depth maps from video')
     parser.add_argument('--input', required=True, help='Input video file')
     parser.add_argument('--output', required=True, help='Output depth video file')
-    parser.add_argument('--model', choices=['small', 'large', 'dav2-small', 'dav2-base', 'dav2-large'], default='small',
-                      help='Depth model type (small=faster, large=better quality, dav2=Depth Anything V2)')
+    parser.add_argument('--model', choices=['small', 'large', 'dav2-small', 'dav2-base', 'dav2-large', 'crater'], default='small',
+                      help='Depth model type (small=faster, large=better quality, dav2=Depth Anything V2, crater=Crater-aware depth)')
     parser.add_argument('--foreground-method', choices=['bgsubtract', 'grabcut'], default='bgsubtract',
                       help='Method for foreground extraction')
     parser.add_argument('--threshold', type=str, default='0.2',
@@ -186,6 +186,20 @@ def update_status(status_file, stage, progress=None, total=None, message=None, e
         print(f"Error updating status: {str(e)}")
         sys.stdout.flush()
 
+def save_depth_map(depth_map, output_path):
+    """
+    Save depth map as an image file.
+    Converts floating point depth map to 8-bit format.
+    """
+    # Normalize depth map to 0-255 range
+    depth_min = depth_map.min()
+    depth_max = depth_map.max()
+    normalized_depth = ((depth_map - depth_min) / (depth_max - depth_min) * 255).astype(np.uint8)
+    
+    # Convert to PIL Image
+    depth_image = Image.fromarray(normalized_depth, mode='L')
+    depth_image.save(output_path)
+
 def main():
     args = parse_args()
     
@@ -236,8 +250,8 @@ def main():
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Check if using Depth Anything V2 models
-        if args.model.startswith('dav2-'):
+        # Check if using Depth Anything V2 models or crater model
+        if args.model.startswith('dav2-') or args.model == 'crater':
             try:
                 # Try to import transformers or install it if not available
                 if not try_install_package('transformers'):
@@ -248,7 +262,8 @@ def main():
                 model_map = {
                     'dav2-small': "depth-anything/Depth-Anything-V2-Small-hf",
                     'dav2-base': "depth-anything/Depth-Anything-V2-Base-hf",
-                    'dav2-large': "depth-anything/Depth-Anything-V2-Large-hf"
+                    'dav2-large': "depth-anything/Depth-Anything-V2-Large-hf",
+                    'crater': "depth-anything/Depth-Anything-V2-Large-hf"  # Crater model uses DAV2-Large as base
                 }
                 
                 model_name = model_map[args.model]
@@ -264,7 +279,7 @@ def main():
                 
         else:
             # Original MiDaS models
-            model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small" if args.model == "small" else "MiDaS_large")
+            model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small" if args.model == "small" else "MiDaS")
             model.to(device)
             model.eval()
 
@@ -356,13 +371,94 @@ def main():
                             })
             
             # Process frame - different approaches based on model type
-            if args.model.startswith('dav2-'):
+            if args.model.startswith('dav2-') or args.model == 'crater':
                 # Use Depth Anything V2 pipeline
                 img = Image.open(frame_path).convert("RGB")
-                depth_result = depth_pipe(img)
-                # Convert tensor to numpy array first, then normalize
-                output = depth_result["predicted_depth"].cpu().numpy()
-                output = (255 * (output - output.min()) / (output.max() - output.min())).astype(np.uint8)
+                img_np = np.array(img)
+                
+                # Extract foreground mask
+                if args.foreground_method == 'bgsubtract':
+                    # Convert to grayscale for background subtraction
+                    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+                    
+                    # Create background subtractor
+                    backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
+                    
+                    # Apply background subtraction
+                    fg_mask = backSub.apply(gray)
+                    
+                    # Apply threshold to get binary mask
+                    _, fg_mask = cv2.threshold(fg_mask, int(float(args.threshold) * 255), 255, cv2.THRESH_BINARY)
+                    
+                elif args.foreground_method == 'grabcut':
+                    # Initialize mask for GrabCut
+                    mask = np.zeros(img_np.shape[:2], np.uint8)
+                    
+                    # Set rectangular region for foreground
+                    rect = (50, 50, img_np.shape[1]-100, img_np.shape[0]-100)
+                    
+                    # GrabCut algorithm parameters
+                    bgdModel = np.zeros((1,65), np.float64)
+                    fgdModel = np.zeros((1,65), np.float64)
+                    
+                    # Apply GrabCut
+                    cv2.grabCut(img_np, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+                    
+                    # Create binary mask
+                    fg_mask = np.where((mask==2)|(mask==0), 0, 1).astype('uint8') * 255
+                
+                # Apply mask to image
+                masked_img = img_np.copy()
+                masked_img[fg_mask == 0] = 0
+                
+                # Convert back to PIL Image
+                masked_img = Image.fromarray(masked_img)
+                
+                if args.model == 'crater':
+                    # Get base depth from DAV2
+                    depth_result = depth_pipe(masked_img)
+                    output = depth_result["predicted_depth"].cpu().numpy()
+                    
+                    # Convert image to grayscale for crater detection
+                    gray = cv2.cvtColor(np.array(masked_img), cv2.COLOR_RGB2GRAY)
+                    
+                    # Detect circular features (potential craters)
+                    circles = cv2.HoughCircles(
+                        gray, 
+                        cv2.HOUGH_GRADIENT, 
+                        dp=1, 
+                        minDist=50,
+                        param1=50,
+                        param2=30,
+                        minRadius=20,
+                        maxRadius=300
+                    )
+                    
+                    # Enhance depth map with detected craters
+                    if circles is not None:
+                        circles = np.uint16(np.around(circles))
+                        for i in circles[0, :]:
+                            # Create crater depth profile
+                            center = (i[0], i[1])
+                            radius = i[2]
+                            y, x = np.ogrid[-center[1]:output.shape[0]-center[1], -center[0]:output.shape[1]-center[0]]
+                            mask = x*x + y*y <= radius*radius
+                            
+                            # Add crater depth profile to the depth map
+                            crater_depth = np.exp(-((x*x + y*y)/(2.0*(radius/3)**2)))
+                            output[mask] = output[mask] * (1 + crater_depth[mask])
+                else:
+                    # Regular DAV2
+                    depth_result = depth_pipe(masked_img)
+                    output = depth_result["predicted_depth"].cpu().numpy()
+                
+                # Apply foreground mask to depth output
+                output[fg_mask == 0] = 0
+                
+                # Normalize the non-zero values
+                if np.sum(output > 0) > 0:  # Only normalize if there are non-zero values
+                    mask = output > 0
+                    output[mask] = (output[mask] - output[mask].min()) / (output[mask].max() - output[mask].min())
             else:
                 # Use original MiDaS approach
                 img = Image.open(frame_path).convert("RGB")
@@ -378,11 +474,9 @@ def main():
                     ).squeeze()
 
                 output = prediction.cpu().numpy()
-                output = (255 * (output - output.min()) / (output.max() - output.min())).astype(np.uint8)
-
-            depth_path = os.path.join(depth_dir, os.path.basename(frame_path))
-            depth_image = Image.fromarray(output)
-            depth_image.save(depth_path)
+                
+                depth_path = os.path.join(depth_dir, os.path.basename(frame_path))
+                save_depth_map(output, depth_path)
 
         # Step 4: Create final video
         update_status(args.status_file, "creating_video", 
