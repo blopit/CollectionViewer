@@ -33,12 +33,28 @@ import sys
 import time
 import hashlib
 
+def try_install_package(package_name):
+    """Try to install a package if it's not already installed"""
+    try:
+        __import__(package_name)
+    except ImportError:
+        print(f"Package {package_name} not found. Attempting to install...")
+        import subprocess
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+            print(f"Successfully installed {package_name}")
+            return True
+        except subprocess.CalledProcessError:
+            print(f"Failed to install {package_name}. Please install it manually.")
+            return False
+    return True
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Generate depth maps from video')
     parser.add_argument('--input', required=True, help='Input video file')
     parser.add_argument('--output', required=True, help='Output depth video file')
-    parser.add_argument('--model', choices=['small', 'large'], default='small',
-                      help='MiDaS model type (small=faster, large=better quality)')
+    parser.add_argument('--model', choices=['small', 'large', 'dav2-small', 'dav2-base', 'dav2-large'], default='small',
+                      help='Depth model type (small=faster, large=better quality, dav2=Depth Anything V2)')
     parser.add_argument('--foreground-method', choices=['bgsubtract', 'grabcut'], default='bgsubtract',
                       help='Method for foreground extraction')
     parser.add_argument('--threshold', type=str, default='0.2',
@@ -215,20 +231,49 @@ def main():
         # Step 1: Load model
         update_status(args.status_file, "loading_model", 
                      progress=0, total=100,
-                     message="Loading MiDaS model...",
+                     message=f"Loading depth model ({args.model})...",
                      extra_info={"device": "GPU" if torch.cuda.is_available() else "CPU"})
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
-        model.to(device)
-        model.eval()
+        
+        # Check if using Depth Anything V2 models
+        if args.model.startswith('dav2-'):
+            try:
+                # Try to import transformers or install it if not available
+                if not try_install_package('transformers'):
+                    raise ImportError("Transformers package is required for Depth Anything V2 models.")
+                
+                from transformers import pipeline
+                
+                model_map = {
+                    'dav2-small': "depth-anything/Depth-Anything-V2-Small-hf",
+                    'dav2-base': "depth-anything/Depth-Anything-V2-Base-hf",
+                    'dav2-large': "depth-anything/Depth-Anything-V2-Large-hf"
+                }
+                
+                model_name = model_map[args.model]
+                depth_pipe = pipeline(task="depth-estimation", model=model_name, device=device)
+                
+                # Define a custom transform for input preprocessing
+                transform = None  # We don't need any custom transform for the pipeline
+                
+            except Exception as e:
+                print(f"Error loading Depth Anything V2 model: {str(e)}")
+                print("Please install transformers using: pip install transformers")
+                sys.exit(1)
+                
+        else:
+            # Original MiDaS models
+            model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small" if args.model == "small" else "MiDaS_large")
+            model.to(device)
+            model.eval()
 
-        # Define transformation
-        transform = Compose([
-            Resize((256, 256)),
-            ToTensor(),
-            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+            # Define transformation for MiDaS
+            transform = Compose([
+                Resize((256, 256)),
+                ToTensor(),
+                Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
         
         # Step 2: Extract frames
         update_status(args.status_file, "extracting_frames", 
@@ -310,21 +355,30 @@ def main():
                                 "eta_human": f"{eta_seconds // 60}m {eta_seconds % 60}s"
                             })
             
-            # Process frame
-            img = Image.open(frame_path).convert("RGB")
-            input_batch = transform(img).unsqueeze(0).to(device)
+            # Process frame - different approaches based on model type
+            if args.model.startswith('dav2-'):
+                # Use Depth Anything V2 pipeline
+                img = Image.open(frame_path).convert("RGB")
+                depth_result = depth_pipe(img)
+                # Convert tensor to numpy array first, then normalize
+                output = depth_result["predicted_depth"].cpu().numpy()
+                output = (255 * (output - output.min()) / (output.max() - output.min())).astype(np.uint8)
+            else:
+                # Use original MiDaS approach
+                img = Image.open(frame_path).convert("RGB")
+                input_batch = transform(img).unsqueeze(0).to(device)
 
-            with torch.no_grad():
-                prediction = model(input_batch)
-                prediction = torch.nn.functional.interpolate(
-                    prediction.unsqueeze(1),
-                    size=(height, width),
-                    mode="bicubic",
-                    align_corners=False,
-                ).squeeze()
+                with torch.no_grad():
+                    prediction = model(input_batch)
+                    prediction = torch.nn.functional.interpolate(
+                        prediction.unsqueeze(1),
+                        size=(height, width),
+                        mode="bicubic",
+                        align_corners=False,
+                    ).squeeze()
 
-            output = prediction.cpu().numpy()
-            output = (255 * (output - output.min()) / (output.max() - output.min())).astype(np.uint8)
+                output = prediction.cpu().numpy()
+                output = (255 * (output - output.min()) / (output.max() - output.min())).astype(np.uint8)
 
             depth_path = os.path.join(depth_dir, os.path.basename(frame_path))
             depth_image = Image.fromarray(output)

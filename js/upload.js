@@ -72,6 +72,18 @@ export class VideoUploader {
           <p>Drop your video here or click to browse</p>
         </div>
       </div>
+      <div class="upload-options">
+        <div class="option-group">
+          <label for="model-select">Depth Model:</label>
+          <select id="model-select">
+            <option value="small">MiDaS Small (Fast)</option>
+            <option value="large">MiDaS Large (Better Quality)</option>
+            <option value="dav2-small">Depth Anything V2 Small</option>
+            <option value="dav2-base">Depth Anything V2 Base</option>
+            <option value="dav2-large">Depth Anything V2 Large</option>
+          </select>
+        </div>
+      </div>
     `;
     this.uploadContainer.appendChild(form);
 
@@ -133,6 +145,36 @@ export class VideoUploader {
 
       .upload-prompt svg {
         margin-bottom: 10px;
+      }
+
+      .upload-options {
+        margin-top: 15px;
+      }
+
+      .option-group {
+        display: flex;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+
+      .option-group label {
+        width: 120px;
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 14px;
+      }
+
+      .option-group select {
+        flex: 1;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.2);
+        color: white;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+        outline: none;
+      }
+
+      .option-group select:focus {
+        border-color: #4d9fff;
       }
 
       .progress-bar {
@@ -415,6 +457,10 @@ export class VideoUploader {
       this.statusText.textContent = 'Uploading video...';
       this.progressBar.style.width = '30%';
 
+      // Get model selection
+      const modelSelect = this.uploadContainer.querySelector('#model-select');
+      const selectedModel = modelSelect?.value || 'small';
+
       // Send to server
       const response = await fetch('/generate-depth', {
         method: 'POST',
@@ -423,7 +469,7 @@ export class VideoUploader {
         },
         body: JSON.stringify({
           video: base64Video,
-          model: 'small', // Use small model for faster processing
+          model: selectedModel,
           foreground_method: 'bgsubtract',
           threshold: '0.2'
         })
