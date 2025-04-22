@@ -905,8 +905,8 @@ function handleOrientation(event) {
     const gammaConstrained = Math.min(Math.max(event.gamma, -25), 25) / 25;
     const betaConstrained = Math.min(Math.max(event.beta - 45, -25), 25) / 25;
 
-    targetRotation.y = gammaConstrained * 0.4; // Increased from 0.3
-    targetRotation.x = -betaConstrained * 0.3; // Increased from 0.2
+    targetRotation.y = gammaConstrained * 0.6; // Increased from 0.4
+    targetRotation.x = -betaConstrained * 0.5; // Increased from 0.3
 
     lastInteractionTime = Date.now();
   }
@@ -923,8 +923,8 @@ function handleTouch(event) {
   const x = touch.clientX / window.innerWidth * 2 - 1;
   const y = -(touch.clientY / window.innerHeight) * 2 + 1;
 
-  targetRotation.y = x * 0.3; // Increased from 0.2
-  targetRotation.x = y * 0.25; // Increased from 0.15
+  targetRotation.y = x * 0.5; // Increased from 0.3
+  targetRotation.x = y * 0.4; // Increased from 0.25
 
   lastInteractionTime = Date.now();
 }
@@ -941,8 +941,8 @@ function handleMouseMove(event) {
   mousePosition.y = -((event.clientY / window.innerHeight) * 2 - 1);
 
   // Set rotation based on mouse position with stronger effect
-  targetRotation.y = mousePosition.x * 0.3; // Increased from 0.2
-  targetRotation.x = mousePosition.y * 0.25; // Increased from 0.15
+  targetRotation.y = mousePosition.x * 0.5; // Increased from 0.3
+  targetRotation.x = mousePosition.y * 0.4; // Increased from 0.25
 
   lastInteractionTime = Date.now();
 
