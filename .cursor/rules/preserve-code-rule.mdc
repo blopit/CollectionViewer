@@ -1,0 +1,20 @@
+---
+description: "This rule enforces careful code preservation during edits, preventing accidental additions or deletions."
+alwaysApply: true
+---
+# Code Preservation Rule
+
+## Core Rules
+
+1. Never delete code without explicit request
+2. Always use `// ... existing code ...` markers
+3. Preserve all initialization code
+4. Maintain event listeners
+5. Keep state management intact
+
+## Implementation
+
+- Verify all code before changes
+- Document intended modifications
+- Double-check all deletions
+- Test functionality after changes

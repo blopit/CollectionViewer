@@ -490,6 +490,7 @@ def main():
         
         cmd = [
             "ffmpeg", "-y",
+            "-v", "verbose",  # Add verbosity
             "-framerate", str(fps),
             "-i", os.path.join(depth_dir, "frame_%06d.jpg"),
             "-c:v", "libx264",
@@ -497,7 +498,24 @@ def main():
             "-crf", "18",  # High quality
             args.output
         ]
-        subprocess.run(cmd, check=True)
+        
+        # Verify frames exist before running FFmpeg
+        frame_pattern = os.path.join(depth_dir, "frame_%06d.jpg")
+        frame_files = sorted([f for f in os.listdir(depth_dir) if f.startswith("frame_") and f.endswith(".jpg")])
+        if not frame_files:
+            raise Exception("No frames found in depth directory")
+        
+        # Verify frame sequence is continuous
+        expected_frames = range(1, len(frame_files) + 1)
+        actual_frames = [int(f[6:12]) for f in frame_files]  # Extract frame numbers
+        if list(expected_frames) != actual_frames:
+            raise Exception("Frame sequence is not continuous")
+            
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg error output:\n{e.stderr}")
+            raise Exception(f"FFmpeg error: {e.stderr}")
         
         # Update final status and cache
         status = {

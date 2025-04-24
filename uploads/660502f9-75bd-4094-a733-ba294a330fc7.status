@@ -1,0 +1,1 @@
+{"status": "error", "message": "Command '['ffmpeg', '-y', '-framerate', '30.0', '-i', '/var/folders/5f/w2blrwjd2yq51pzykyblvj3h0000gn/T/tmpkes2kt0_/depth/frame_%06d.jpg', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', 'videos/depth/depth_video_1745342614.mp4']' returned non-zero exit status 254."}

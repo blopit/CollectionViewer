@@ -1,1 +1,1 @@
-{"status": "processing", "stage": "processing", "progress": 44, "total": 100, "message": "Analyzing frame depth", "frames_processed": 36, "total_frames": 153, "processing_fps": 0.1, "eta_seconds": 1170, "eta_human": "19m 30s"}
+{"status": "error", "message": "Command '['ffmpeg', '-y', '-framerate', '30.0', '-i', '/var/folders/5f/w2blrwjd2yq51pzykyblvj3h0000gn/T/tmp0mmhhd1p/depth/frame_%06d.jpg', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', 'videos/depth/depth_video_1745340425.mp4']' returned non-zero exit status 254."}
