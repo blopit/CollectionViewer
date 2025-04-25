@@ -23,8 +23,8 @@ let material;
 let mesh;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-const renderer = new THREE.WebGLRenderer({ 
-  canvas, 
+const renderer = new THREE.WebGLRenderer({
+  canvas,
   antialias: true,
   alpha: true
 });
@@ -58,7 +58,7 @@ const settings = {
 // Track video state
 let isPlaying = false;
 
-// Hide debug overlay initially
+// Hide debug overlay
 if (debug) {
   debug.style.display = 'none';
 }
@@ -70,32 +70,24 @@ const MIN_CAMERA_Z = -8;
 const MAX_CAMERA_Z = -2;
 let initialPinchDistance = 0;
 let lastTouchCenter = { x: 0, y: 0 };
+let initialTouchPosition = { x: 0, y: 0 }; // Store initial touch position for joystick-like tilting
 const objectPosition = { x: 0, y: 0, z: 0 };
 const MAX_TRANSLATION = 2.0;
 const TRANSLATION_SENSITIVITY = 8.0; // Increased sensitivity
+const TILT_SENSITIVITY = 0.5; // Sensitivity for joystick-like tilting
 
 // Update debug info
 function updateDebugInfo(info) {
-  debug.innerHTML = `
-    Video: ${info.videoWidth}x${info.videoHeight}<br>
-    Canvas: ${info.canvasWidth}x${info.canvasHeight}<br>
-    Mesh: ${info.meshWidth}x${info.meshHeight}<br>
-    Screen: ${info.screenWidth}x${info.screenHeight}<br>
-    Aspect: ${info.aspect.toFixed(4)}<br>
-    Color Video: ${!colorVideo.paused ? 'Playing' : 'Paused'} (${colorVideo.readyState})<br>
-    Depth Video: ${!depthVideo.paused ? 'Playing' : 'Paused'} (${depthVideo.readyState})<br>
-    Effect Strength: ${settings.effectStrength.toFixed(2)}<br>
-    Shine: ${settings.shineStrength.toFixed(2)}<br>
-    Contrast: ${settings.depthContrast.toFixed(2)}<br>
-    Camera Z: ${info.cameraZ || currentCameraZ.toFixed(2)}
-  `;
+  // Skip updating debug info since debug overlay has been removed
+  // This prevents errors when the debug element doesn't exist
+  return;
 }
 
 // Function to create or update mesh with improved shaders
 function initOrUpdateMesh() {
   const videoWidth = colorVideo.videoWidth;
   const videoHeight = colorVideo.videoHeight;
-  
+
   if (!videoWidth || !videoHeight) {
     console.warn('Video dimensions not available yet');
     return false;
@@ -106,7 +98,7 @@ function initOrUpdateMesh() {
   // High resolution mesh for detailed displacement
   const segmentsX = 512;
   const segmentsY = Math.floor(segmentsX / aspect);
-  
+
   if (!geometry) {
     // Make the mesh larger to enhance the pop-out effect
     geometry = new THREE.PlaneGeometry(3 * aspect, 3, segmentsX - 1, segmentsY - 1);
@@ -152,49 +144,49 @@ function initOrUpdateMesh() {
         uniform float rotationX;
         uniform float rotationY;
         uniform vec3 objectPosition;
-        
+
         varying vec2 vUv;
         varying vec3 vNormal;
         varying vec3 vViewPosition;
         varying vec3 vWorldPosition;
         varying float vDepthValue;
-        
+
         float sampleDepthValue(vec2 uv) {
           vec4 depthColor = texture2D(depthMap, uv);
           return (depthColor.r + depthColor.g + depthColor.b) / 3.0;
         }
-        
+
         float getSmoothedDepth(vec2 uv) {
           float center = sampleDepthValue(uv);
-          
+
           float pixelSize = 1.0 / 512.0;
           float sum = center;
           float weight = 1.0;
-          
+
           for(float x = -2.0; x <= 2.0; x++) {
             for(float y = -2.0; y <= 2.0; y++) {
               if(x == 0.0 && y == 0.0) continue;
-              
+
               vec2 offset = vec2(x, y) * pixelSize;
               float sampleValue = sampleDepthValue(uv + offset);
-              
+
               float dist = length(vec2(x, y));
               float sampleWeight = exp(-dist * (1.0 - depthSmoothing) * 0.5);
-              
+
               sum += sampleValue * sampleWeight;
               weight += sampleWeight;
             }
           }
-          
+
           return sum / weight;
         }
-        
+
         mat4 rotationMatrix(vec3 axis, float angle) {
           axis = normalize(axis);
           float s = sin(angle);
           float c = cos(angle);
           float oc = 1.0 - c;
-          
+
           return mat4(
             oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,  0.0,
             oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,  0.0,
@@ -202,40 +194,40 @@ function initOrUpdateMesh() {
             0.0,                                 0.0,                                 0.0,                                 1.0
           );
         }
-        
+
         void main() {
           vUv = vec2(1.0 - uv.x, 1.0 - uv.y);
-          
+
           float rawDepth = getSmoothedDepth(vUv);
           float depth = 1.0 - pow(rawDepth, depthContrast);
           vDepthValue = depth;
-          
+
           vec3 pos = position;
           vec3 transformedNormal = normalize(normalMatrix * normal);
-          
+
           // Apply displacement along normal
           float displacement = depth * effectStrength;
           pos += normal * displacement;
-          
+
           // Move pivot point to base of the depth
           float baseOffset = 1.5 - effectStrength;
           pos.y += baseOffset;
-          
+
           // Apply rotations around base point
           mat4 rotX = rotationMatrix(vec3(1.0, 0.0, 0.0), rotationX);
           mat4 rotY = rotationMatrix(vec3(0.0, 1.0, 0.0), rotationY);
-          
+
           vec4 centeredPos = vec4(pos, 1.0);
           centeredPos = rotY * rotX * centeredPos;
           pos = centeredPos.xyz;
-          
+
           // Move back and apply object translation
           pos.y -= baseOffset;
           pos += objectPosition;
-          
+
           vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
           gl_Position = projectionMatrix * mvPosition;
-          
+
           vViewPosition = -mvPosition.xyz;
           vNormal = normalize(normalMatrix * mat3(rotY * rotX) * normal);
           vWorldPosition = (modelMatrix * vec4(pos, 1.0)).xyz;
@@ -246,48 +238,48 @@ function initOrUpdateMesh() {
         uniform float shineStrength;
         uniform float clearcoatRoughness;
         uniform float clearcoatNormal;
-        
+
         varying vec2 vUv;
         varying vec3 vNormal;
         varying vec3 vViewPosition;
         varying vec3 vWorldPosition;
         varying float vDepthValue;
-        
+
         void main() {
           vec4 diffuseColor = texture2D(colorMap, vUv);
           vec3 normal = normalize(vNormal);
           vec3 viewDir = normalize(vViewPosition);
-          
+
           // Base layer lighting
           vec3 lightPos = vec3(2.0, 2.0, 2.0);
           vec3 lightDir = normalize(lightPos - vWorldPosition);
           float diff = max(dot(normal, lightDir), 0.0);
-          
+
           // Specular
           vec3 halfwayDir = normalize(lightDir + viewDir);
           float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0) * shineStrength;
-          
+
           // Clearcoat layer
           float clearcoatDiff = pow(1.0 - abs(dot(normal, viewDir)), 2.0);
           vec3 clearcoatReflect = reflect(-viewDir, normal);
-          float clearcoatSpec = pow(max(dot(clearcoatReflect, lightDir), 0.0), 
+          float clearcoatSpec = pow(max(dot(clearcoatReflect, lightDir), 0.0),
                                   mix(16.0, 128.0, 1.0 - clearcoatRoughness));
-          
+
           // Fresnel
           float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 3.0);
-          
+
           // Ambient occlusion from depth
           float ao = 1.0 - (vDepthValue * 0.5);
-          
+
           // Combine all lighting components
           vec3 ambient = vec3(0.2) * ao;
           vec3 diffuse = vec3(0.7) * diff;
           vec3 specular = vec3(0.3) * spec;
           vec3 clearcoat = vec3(0.5) * clearcoatSpec * clearcoatDiff;
           vec3 fresnelColor = vec3(0.2) * fresnel;
-          
+
           vec3 finalColor = (ambient + diffuse + specular + clearcoat + fresnelColor) * diffuseColor.rgb;
-          
+
           gl_FragColor = vec4(finalColor, diffuseColor.a);
         }
       `,
@@ -306,7 +298,7 @@ function initOrUpdateMesh() {
   return true;
 }
 
-// Function to update dimensions and debug info
+// Function to update dimensions
 function updateDimensions() {
   const width = window.innerWidth;
   const height = window.innerHeight;
@@ -319,17 +311,7 @@ function updateDimensions() {
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
 
-  updateDebugInfo({
-    videoWidth,
-    videoHeight,
-    canvasWidth: width,
-    canvasHeight: height,
-    meshWidth: mesh ? mesh.geometry.parameters.width : 0,
-    meshHeight: mesh ? mesh.geometry.parameters.height : 0,
-    screenWidth: width,
-    screenHeight: height,
-    aspect: videoWidth / videoHeight
-  });
+  // Debug info update removed
 }
 
 // Helper to convert screen coordinates to 3D space
@@ -340,12 +322,12 @@ function screenToWorld(x, y) {
 
   const vector = new THREE.Vector3(normalizedX, normalizedY, 0.5);
   vector.unproject(camera);
-  
+
   const dir = vector.sub(camera.position).normalize();
   const distance = -camera.position.z / dir.z;
-  
+
   const pos = camera.position.clone().add(dir.multiplyScalar(distance));
-  
+
   pos.x = Math.max(-2, Math.min(2, pos.x));
   pos.y = Math.max(-2, Math.min(2, pos.y));
   pos.z = 1;
@@ -357,7 +339,7 @@ function screenToWorld(x, y) {
 function updateLightPosition(x, y) {
   const worldPos = screenToWorld(x, y);
   pointLight.position.copy(worldPos);
-  
+
   // Update shader uniforms if needed
   if (material?.uniforms) {
     material.uniforms.effectStrength.value = settings.effectStrength;
@@ -397,37 +379,43 @@ function init() {
   // Set initial renderer size
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  
+
   // Set initial camera position further back
   camera.position.z = initialCameraZ;
   camera.lookAt(0, 0, 0);
 
   // Setup event listeners
   window.addEventListener('resize', updateDimensions);
-  
+
   // Touch handling
   let isTouch = false;
   let touchStartTime = 0;
   let hasMoved = false;
-  
+
   function handleTouchStart(e) {
     isTouch = true;
     touchStartTime = Date.now();
     hasMoved = false;
-    
+
     if (e.touches.length === 1) {
       const touch = e.touches[0];
-      updateTilt(touch.clientX, touch.clientY, true);
+      // Store initial touch position for joystick-like tilting
+      initialTouchPosition = {
+        x: touch.clientX,
+        y: touch.clientY
+      };
+      // We'll calculate deltas from this initial position
+      // but maintain the current rotation
     } else if (e.touches.length === 2) {
       const touch1 = e.touches[0];
       const touch2 = e.touches[1];
-      
+
       // Store initial pinch distance and center point
       initialPinchDistance = Math.hypot(
         touch2.clientX - touch1.clientX,
         touch2.clientY - touch1.clientY
       );
-      
+
       lastTouchCenter = {
         x: (touch1.clientX + touch2.clientX) / 2,
         y: (touch1.clientY + touch2.clientY) / 2
@@ -441,42 +429,59 @@ function init() {
 
     if (e.touches.length === 1) {
       const touch = e.touches[0];
-      updateTilt(touch.clientX, touch.clientY, true);
+
+      // Calculate delta from initial touch position (joystick-like behavior)
+      const deltaX = touch.clientX - initialTouchPosition.x;
+      const deltaY = touch.clientY - initialTouchPosition.y;
+
+      // Store current position as new initial position for next move
+      initialTouchPosition = {
+        x: touch.clientX,
+        y: touch.clientY
+      };
+
+      // Apply tilt based on the delta from initial position
+      // Normalize by screen dimensions and apply sensitivity
+      const rotationY = deltaX / window.innerWidth * Math.PI * TILT_SENSITIVITY;
+      const rotationX = deltaY / window.innerHeight * Math.PI * TILT_SENSITIVITY;
+
+      // Update tilt with calculated rotations
+      updateJoystickTilt(rotationX, rotationY);
     } else if (e.touches.length === 2) {
       const touch1 = e.touches[0];
       const touch2 = e.touches[1];
-      
+
       // Calculate new center point
       const currentCenter = {
         x: (touch1.clientX + touch2.clientX) / 2,
         y: (touch1.clientY + touch2.clientY) / 2
       };
-      
+
       // Calculate translation (inverted directions for natural feel)
       const deltaX = -(currentCenter.x - lastTouchCenter.x) / window.innerWidth * TRANSLATION_SENSITIVITY;
       const deltaY = (currentCenter.y - lastTouchCenter.y) / window.innerHeight * TRANSLATION_SENSITIVITY;
-      
+
       // Update object position with bounds
       objectPosition.x = Math.max(-MAX_TRANSLATION, Math.min(MAX_TRANSLATION, objectPosition.x + deltaX));
       objectPosition.y = Math.max(-MAX_TRANSLATION, Math.min(MAX_TRANSLATION, objectPosition.y + deltaY));
-      
+
       if (material?.uniforms) {
         material.uniforms.objectPosition.value.set(objectPosition.x, objectPosition.y, objectPosition.z);
       }
-      
+
       // Store new center point
       lastTouchCenter = currentCenter;
-      
+
       // Handle pinch zoom
       const currentDistance = Math.hypot(
         touch2.clientX - touch1.clientX,
         touch2.clientY - touch1.clientY
       );
-      
+
       if (initialPinchDistance > 0) {
         const pinchDelta = currentDistance / initialPinchDistance;
         const newCameraZ = Math.max(MIN_CAMERA_Z, Math.min(MAX_CAMERA_Z, initialCameraZ * (1 / pinchDelta)));
-        
+
         if (newCameraZ !== currentCameraZ) {
           currentCameraZ = newCameraZ;
           camera.position.z = currentCameraZ;
@@ -488,29 +493,68 @@ function init() {
 
   function handleTouchEnd(e) {
     const touchDuration = Date.now() - touchStartTime;
-    
+
     // If it was a quick tap without much movement, toggle playback
     if (!hasMoved && touchDuration < 200) {
       togglePlayback();
     }
-    
+
     if (!e.touches || e.touches.length === 0) {
-      // Only reset tilt, keep translation
-      requestAnimationFrame(() => {
-        document.documentElement.style.setProperty('--rotateX', '0deg');
-        document.documentElement.style.setProperty('--rotateY', '0deg');
-      });
+      // Keep the current tilt when touch ends (don't reset)
       initialPinchDistance = 0;
     } else if (e.touches.length === 1) {
+      // If we go from multi-touch to single touch, update the initial position
+      // to maintain the current tilt
       const touch = e.touches[0];
-      updateTilt(touch.clientX, touch.clientY, true);
+      initialTouchPosition = {
+        x: touch.clientX,
+        y: touch.clientY
+      };
     }
   }
 
   // Mouse handling
-  function handleMouseMove(e) {
+  let isMouseDown = false;
+  let initialMousePosition = { x: 0, y: 0 };
+
+  function handleMouseDown(e) {
     if (!isTouch) {
-      updateTilt(e.clientX, e.clientY);
+      isMouseDown = true;
+      initialMousePosition = {
+        x: e.clientX,
+        y: e.clientY
+      };
+
+      // We'll calculate deltas from this initial position
+      // but maintain the current rotation
+    }
+  }
+
+  function handleMouseMove(e) {
+    if (!isTouch && isMouseDown) {
+      // Calculate delta from initial mouse position
+      const deltaX = e.clientX - initialMousePosition.x;
+      const deltaY = e.clientY - initialMousePosition.y;
+
+      // Store current position as new initial position for next move
+      initialMousePosition = {
+        x: e.clientX,
+        y: e.clientY
+      };
+
+      // Apply tilt based on the delta from initial position
+      const rotationY = deltaX / window.innerWidth * Math.PI * TILT_SENSITIVITY;
+      const rotationX = deltaY / window.innerHeight * Math.PI * TILT_SENSITIVITY;
+
+      // Update tilt with calculated rotations
+      updateJoystickTilt(rotationX, rotationY);
+    }
+  }
+
+  function handleMouseUp() {
+    if (!isTouch) {
+      isMouseDown = false;
+      // Keep the current tilt when mouse is released (don't reset)
     }
   }
 
@@ -519,7 +563,12 @@ function init() {
   sceneEl.addEventListener('touchmove', handleTouchMove, { passive: false });
   sceneEl.addEventListener('touchend', handleTouchEnd);
   sceneEl.addEventListener('touchcancel', handleTouchEnd);
+
+  // Add mouse event listeners for joystick-like behavior
+  sceneEl.addEventListener('mousedown', handleMouseDown);
   sceneEl.addEventListener('mousemove', handleMouseMove);
+  sceneEl.addEventListener('mouseup', handleMouseUp);
+  sceneEl.addEventListener('mouseleave', handleMouseUp);
 
   // Settings panel
   settingsBtn.addEventListener('click', () => {
@@ -573,17 +622,17 @@ function init() {
       videosLoaded++;
       console.log(`Video loaded (${videosLoaded}/2):`, this.src);
     }
-    
+
     if (videosLoaded === 2) {
       console.log('Both videos loaded, preparing playback');
       // Ensure both videos loop
       colorVideo.loop = true;
       depthVideo.loop = true;
-      
+
       // Reset videos to start
       colorVideo.currentTime = 0;
       depthVideo.currentTime = 0;
-      
+
       // Play both videos and ensure sync
       Promise.all([
         colorVideo.play().then(() => {
@@ -610,7 +659,7 @@ function init() {
         // Ensure initial sync
         depthVideo.currentTime = colorVideo.currentTime;
         console.log('Videos synced at time:', colorVideo.currentTime);
-        
+
         initOrUpdateMesh();
         updateDimensions();
         syncFrames();  // Start frame sync
@@ -668,7 +717,7 @@ function syncFrames() {
 // Animation loop
 function animate() {
   requestAnimationFrame(animate);
-  
+
   // Ensure videos stay in sync
   if (colorVideo.readyState >= 2 && depthVideo.readyState >= 2) {
     const drift = Math.abs(colorVideo.currentTime - depthVideo.currentTime);
@@ -685,26 +734,51 @@ function animate() {
     material.uniforms.depthSmoothing.value = settings.depthSmoothing;
     material.uniforms.time.value = performance.now() / 1000;
   }
-  
+
+  // Debug info updates removed
+
   renderer.render(scene, camera);
 }
 
-// Update tilt using Three.js rotation
+// Update tilt using Three.js rotation based on absolute position
 function updateTilt(x, y, isTouch = false) {
   const rect = sceneEl.getBoundingClientRect();
   const centerX = rect.left + rect.width / 2;
   const centerY = rect.top + rect.height / 2;
-  
+
   const multiplier = isTouch ? 2 : 1;
   const rotationY = ((x - centerX) / (rect.width / 2) * Math.PI / 6) * multiplier;
   const rotationX = ((y - centerY) / (rect.height / 2) * Math.PI / 6) * multiplier;
-  
+
   settings.rotationX = rotationX;
   settings.rotationY = rotationY;
-  
+
   if (material?.uniforms) {
     material.uniforms.rotationX.value = rotationX;
     material.uniforms.rotationY.value = rotationY;
+  }
+}
+
+// Update tilt using joystick-like behavior (relative to initial touch)
+function updateJoystickTilt(rotationX, rotationY) {
+  // Apply maximum tilt limits
+  const MAX_TILT = Math.PI / 4; // 45 degrees max tilt
+
+  // Add the new rotation to the current rotation (accumulate)
+  let newRotationX = settings.rotationX + rotationX;
+  let newRotationY = settings.rotationY + rotationY;
+
+  // Clamp rotation values to prevent extreme tilting
+  newRotationX = Math.max(-MAX_TILT, Math.min(MAX_TILT, newRotationX));
+  newRotationY = Math.max(-MAX_TILT, Math.min(MAX_TILT, newRotationY));
+
+  // Update settings and shader uniforms
+  settings.rotationX = newRotationX;
+  settings.rotationY = newRotationY;
+
+  if (material?.uniforms) {
+    material.uniforms.rotationX.value = newRotationX;
+    material.uniforms.rotationY.value = newRotationY;
   }
 }
 
@@ -719,7 +793,7 @@ function showProcessing(show, status = '', progress = 0) {
 async function testRandomVideoAPI() {
   try {
     showProcessing(true, 'Fetching random video...', 10);
-    
+
     let response;
     // Check if we're in local development first
     if (window.location.hostname === 'localhost') {
@@ -749,14 +823,14 @@ async function testRandomVideoAPI() {
     if (!response.ok) {
       throw new Error(`Failed to fetch random video: ${response.status} ${response.statusText}`);
     }
-    
+
     const data = await response.json();
     console.log('Random Video API Response:', data);
-    
+
     // Handle both direct API response and local development formats
     let videoUrl;
     let depthUrl;
-    
+
     if (data.depth_url) {
       // Direct response with depth URL
       videoUrl = data.url;
@@ -773,9 +847,9 @@ async function testRandomVideoAPI() {
 
     console.log('Video URL:', videoUrl);
     console.log('Depth URL:', depthUrl);
-    
+
     showProcessing(true, 'Checking video accessibility...', 20);
-    
+
     // Check if video is accessible
     try {
       const videoCheck = await fetch(videoUrl, { method: 'HEAD' }).catch(() => ({ ok: false }));
@@ -791,7 +865,7 @@ async function testRandomVideoAPI() {
     }
 
     showProcessing(true, 'Checking for depth map...', 30);
-    
+
     // Check if depth map exists or is provided directly
     let depthMapExists = false;
     try {
@@ -809,11 +883,11 @@ async function testRandomVideoAPI() {
     if (depthMapExists) {
       showProcessing(true, 'Loading videos...', 60);
       console.log('Loading videos with URLs:', { videoUrl, depthUrl });
-      
+
       // Load both videos
       colorVideo.src = videoUrl;
       depthVideo.src = depthUrl;
-      
+
       // Wait for video metadata to validate
       try {
         await Promise.all([
@@ -840,7 +914,7 @@ async function testRandomVideoAPI() {
             }, { once: true });
           })
         ]);
-        
+
         showProcessing(true, 'Starting playback...', 90);
         return true;
       } catch (error) {
@@ -868,4 +942,4 @@ async function testRandomVideoAPI() {
 // Start everything
 init();
 // Test the random video API
-testRandomVideoAPI(); 
+testRandomVideoAPI();

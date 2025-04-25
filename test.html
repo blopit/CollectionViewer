@@ -10,9 +10,9 @@
       --rotateY: 0deg;
       --perspective: 800px;
     }
-    * { 
-      box-sizing: border-box; 
-      margin: 0; 
+    * {
+      box-sizing: border-box;
+      margin: 0;
       padding: 0;
       -webkit-tap-highlight-color: transparent;
     }
@@ -153,17 +153,7 @@
       cursor: pointer;
     }
 
-    #debug {
-      position: fixed;
-      bottom: 10px;
-      left: 10px;
-      color: white;
-      font-family: monospace;
-      font-size: 12px;
-      background: rgba(0, 0, 0, 0.7);
-      padding: 10px;
-      z-index: 1000;
-    }
+    /* Debug overlay removed */
 
     #processing-overlay {
       position: fixed;
@@ -294,8 +284,6 @@
     </div>
   </div>
 
-  <!-- Debug info -->
-  <div id="debug"></div>
 
   <!-- Settings panel -->
   <button id="settings-btn">
@@ -354,18 +342,18 @@
       const videoData = JSON.parse(selectedVideo);
       const colorVideo = document.getElementById('colorVideo');
       const depthVideo = document.getElementById('depthVideo');
-      
+
       // Update video sources
       colorVideo.src = videoData.originalVideo;
       depthVideo.src = videoData.depthVideo;
-      
+
       // Clear selection
       sessionStorage.removeItem('selectedVideo');
-      
+
       // Reload videos
       colorVideo.load();
       depthVideo.load();
-      
+
       // Start playing when both videos are ready
       Promise.all([
         new Promise(resolve => colorVideo.addEventListener('canplay', resolve, {once: true})),
@@ -375,10 +363,10 @@
         depthVideo.play();
       });
     }
-    
+
     const settingsBtn = document.getElementById('settings-btn');
     const settingsPanel = document.getElementById('settings-panel');
-    
+
     // Debug logging function
     function debugLog(message) {
         console.log(`[Debug] ${message}`);
@@ -389,10 +377,10 @@
         debugLog('Toggle settings called');
         e.preventDefault();
         e.stopPropagation();
-        
+
         const isVisible = settingsPanel.classList.contains('visible');
         debugLog(`Panel is currently ${isVisible ? 'visible' : 'hidden'}`);
-        
+
         if (isVisible) {
             settingsPanel.classList.remove('visible');
             document.body.classList.remove('panel-open');
@@ -432,8 +420,8 @@
 
     // Close panel when clicking outside
     document.addEventListener('click', (e) => {
-        if (settingsPanel.classList.contains('visible') && 
-            !settingsPanel.contains(e.target) && 
+        if (settingsPanel.classList.contains('visible') &&
+            !settingsPanel.contains(e.target) &&
             !settingsBtn.contains(e.target)) {
             debugLog('Outside click - closing panel');
             settingsPanel.classList.remove('visible');

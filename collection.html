@@ -138,7 +138,7 @@
             const now = new Date();
             const diff = now - date;
             const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-            
+
             if (days === 0) return 'Today';
             if (days === 1) return 'Yesterday';
             if (days < 7) return `${days} days ago`;
@@ -150,10 +150,10 @@
             try {
                 const response = await fetch('videos/catalog.json');
                 const catalog = await response.json();
-                
+
                 const grid = document.getElementById('grid');
                 grid.innerHTML = ''; // Clear loading message
-                
+
                 catalog.videos.forEach(video => {
                     const card = document.createElement('div');
                     card.className = 'video-card';
@@ -168,22 +168,22 @@
                             </div>
                         </div>
                     `;
-                    
+
                     // Add click handler to load video in viewer
                     card.addEventListener('click', () => {
                         // Store selected video in sessionStorage
                         sessionStorage.setItem('selectedVideo', JSON.stringify({
-                            originalVideo: video.original_video,
-                            depthVideo: video.depth_video
+                            originalVideo: `videos/${video.original_video}`,
+                            depthVideo: `videos/${video.depth_video}`
                         }));
-                        
+
                         // Navigate back to viewer
                         window.location.href = 'test.html';
                     });
-                    
+
                     grid.appendChild(card);
                 });
-                
+
             } catch (error) {
                 console.error('Error loading catalog:', error);
                 document.getElementById('grid').innerHTML = `
@@ -198,4 +198,4 @@
         document.addEventListener('DOMContentLoaded', loadCatalog);
     </script>
 </body>
-</html> 
+</html>

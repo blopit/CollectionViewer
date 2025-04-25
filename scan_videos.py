@@ -29,7 +29,7 @@ class VideoCollectionScanner:
         self.videos_dir = Path(videos_dir)
         self.thumbnails_dir = Path(thumbnails_dir)
         self.thumbnails_dir.mkdir(exist_ok=True)
-        
+
     def generate_thumbnail(self, video_path, output_path, size=(320, 180)):
         """Generate thumbnail from video first frame"""
         try:
@@ -51,9 +51,13 @@ class VideoCollectionScanner:
         """Find matching video and depth map pairs"""
         pairs = []
         processed = set()
-        
-        # Scan videos directory
-        for file in self.videos_dir.glob("*.mp4"):
+
+        # Recursively scan videos directory and all subdirectories
+        for file in self.videos_dir.glob("**/*.mp4"):
+            # Skip files in __pycache__ directories
+            if "__pycache__" in str(file):
+                continue
+
             if file.stem.endswith("_depth"):
                 # This is a depth video, find its original
                 original = file.parent / f"{file.stem[:-6]}.mp4"
@@ -70,7 +74,8 @@ class VideoCollectionScanner:
                     if pair:
                         pairs.append(pair)
                         processed.add(str(file))
-        
+
+        logger.info(f"Found {len(pairs)} video pairs")
         return pairs
 
     def process_pair(self, original_video, depth_video):
@@ -80,22 +85,35 @@ class VideoCollectionScanner:
             thumb_path = self.thumbnails_dir / f"{original_video.stem}_thumb.jpg"
             if not thumb_path.exists():
                 self.generate_thumbnail(original_video, thumb_path)
-            
+
             # Get video metadata
             cap = cv2.VideoCapture(str(original_video))
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = int(cap.get(cv2.CAP_PROP_FPS))
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            duration = frame_count / fps
+            duration = frame_count / fps if fps > 0 else 0
             cap.release()
-            
+
+            # Get relative paths for videos
+            try:
+                original_rel_path = original_video.relative_to(self.videos_dir)
+            except ValueError:
+                # If the path is not relative to videos_dir, use the full path
+                original_rel_path = original_video
+
+            try:
+                depth_rel_path = depth_video.relative_to(self.videos_dir)
+            except ValueError:
+                # If the path is not relative to videos_dir, use the full path
+                depth_rel_path = depth_video
+
             # Create metadata
             return {
                 "id": original_video.stem,
-                "original_video": str(original_video.relative_to(self.videos_dir)),
-                "depth_video": str(depth_video.relative_to(self.videos_dir)),
-                "thumbnail": str(thumb_path.relative_to(self.thumbnails_dir)),
+                "original_video": str(original_rel_path),
+                "depth_video": str(depth_rel_path),
+                "thumbnail": str(thumb_path.name),  # Just use the filename
                 "width": width,
                 "height": height,
                 "fps": fps,
@@ -103,7 +121,7 @@ class VideoCollectionScanner:
                 "frame_count": frame_count,
                 "created": datetime.fromtimestamp(original_video.stat().st_ctime).isoformat()
             }
-            
+
         except Exception as e:
             logger.error(f"Error processing video pair {original_video.name}: {e}")
             return None
@@ -116,12 +134,12 @@ class VideoCollectionScanner:
             "video_count": len(pairs),
             "videos": pairs
         }
-        
+
         # Save catalog
         catalog_path = self.videos_dir / "catalog.json"
         with open(catalog_path, "w") as f:
             json.dump(catalog, f, indent=2)
-            
+
         logger.info(f"Created catalog with {len(pairs)} video pairs")
         return catalog_path
 
@@ -131,4 +149,4 @@ def main():
     logger.info(f"Catalog saved to: {catalog_path}")
 
 if __name__ == "__main__":
-    main() 
+    main()
