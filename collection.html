@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Collection</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #111;
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 0 10px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 500;
+        }
+
+        .back-btn {
+            padding: 8px 16px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            text-decoration: none;
+        }
+
+        .back-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 10px;
+        }
+
+        .video-card {
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.2s ease;
+            cursor: pointer;
+        }
+
+        .video-card:hover {
+            transform: scale(1.02);
+            background: rgba(255,255,255,0.15);
+        }
+
+        .thumbnail {
+            width: 100%;
+            aspect-ratio: 16/9;
+            object-fit: cover;
+        }
+
+        .video-info {
+            padding: 15px;
+        }
+
+        .video-title {
+            font-size: 16px;
+            margin-bottom: 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .video-meta {
+            font-size: 14px;
+            color: rgba(255,255,255,0.7);
+            display: flex;
+            gap: 15px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 18px;
+            color: rgba(255,255,255,0.7);
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                gap: 15px;
+            }
+
+            .header {
+                margin-bottom: 20px;
+            }
+
+            .header h1 {
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Video Collection</h1>
+        <a href="test.html" class="back-btn">Back to Viewer</a>
+    </div>
+
+    <div id="grid" class="grid">
+        <div class="loading">Loading videos...</div>
+    </div>
+
+    <script>
+        // Format duration in seconds to MM:SS
+        function formatDuration(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Format date to relative time
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diff = now - date;
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            
+            if (days === 0) return 'Today';
+            if (days === 1) return 'Yesterday';
+            if (days < 7) return `${days} days ago`;
+            return date.toLocaleDateString();
+        }
+
+        // Load video catalog and create grid
+        async function loadCatalog() {
+            try {
+                const response = await fetch('videos/catalog.json');
+                const catalog = await response.json();
+                
+                const grid = document.getElementById('grid');
+                grid.innerHTML = ''; // Clear loading message
+                
+                catalog.videos.forEach(video => {
+                    const card = document.createElement('div');
+                    card.className = 'video-card';
+                    card.innerHTML = `
+                        <img class="thumbnail" src="thumbnails/${video.thumbnail}" alt="${video.id}">
+                        <div class="video-info">
+                            <div class="video-title">${video.id}</div>
+                            <div class="video-meta">
+                                <span>${formatDuration(video.duration)}</span>
+                                <span>${video.width}×${video.height}</span>
+                                <span>${formatDate(video.created)}</span>
+                            </div>
+                        </div>
+                    `;
+                    
+                    // Add click handler to load video in viewer
+                    card.addEventListener('click', () => {
+                        // Store selected video in sessionStorage
+                        sessionStorage.setItem('selectedVideo', JSON.stringify({
+                            originalVideo: video.original_video,
+                            depthVideo: video.depth_video
+                        }));
+                        
+                        // Navigate back to viewer
+                        window.location.href = 'test.html';
+                    });
+                    
+                    grid.appendChild(card);
+                });
+                
+            } catch (error) {
+                console.error('Error loading catalog:', error);
+                document.getElementById('grid').innerHTML = `
+                    <div class="loading" style="color: #ff4444;">
+                        Error loading videos. Please try again later.
+                    </div>
+                `;
+            }
+        }
+
+        // Load catalog when page loads
+        document.addEventListener('DOMContentLoaded', loadCatalog);
+    </script>
+</body>
+</html> 

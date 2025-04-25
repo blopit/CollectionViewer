@@ -80,39 +80,48 @@
     /* Settings panel styles */
     #settings-btn {
       position: fixed;
-      bottom: 20px;
-      right: 20px;
-      width: 40px;
-      height: 40px;
+      bottom: 30px;
+      right: 30px;
+      width: 50px;
+      height: 50px;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.2);
       border: none;
       cursor: pointer;
-      z-index: 100;
-      padding: 8px;
+      z-index: 1000;
+      padding: 12px;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
     }
 
-    #settings-btn svg {
-      width: 100%;
-      height: 100%;
-      fill: white;
+    #settings-btn:active {
+      background: rgba(255, 255, 255, 0.3);
     }
 
     #settings-panel {
       position: fixed;
-      bottom: -200px;
+      bottom: -100%;
       right: 20px;
-      width: 300px;
+      width: min(300px, calc(100% - 40px));
       background: rgba(0, 0, 0, 0.8);
       border-radius: 12px;
       padding: 20px;
       color: white;
       transition: transform 0.3s ease;
-      z-index: 99;
+      z-index: 999;
+      max-height: 80vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+      pointer-events: none;
     }
 
     #settings-panel.visible {
-      transform: translateY(-220px);
+      transform: translateY(-120%);
+      pointer-events: auto;
     }
 
     .setting-row {
@@ -127,17 +136,18 @@
 
     .setting-row input[type="range"] {
       width: 100%;
-      height: 20px;
+      height: 30px;
       -webkit-appearance: none;
       background: rgba(255, 255, 255, 0.2);
-      border-radius: 10px;
+      border-radius: 15px;
       outline: none;
+      margin: 10px 0;
     }
 
     .setting-row input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
-      width: 20px;
-      height: 20px;
+      width: 30px;
+      height: 30px;
       background: white;
       border-radius: 50%;
       cursor: pointer;
@@ -187,6 +197,91 @@
     .status-text {
       margin-bottom: 8px;
     }
+
+    #random-video-btn {
+      padding: 12px 24px !important;
+      background: rgba(255,255,255,0.2) !important;
+      border: none !important;
+      color: white !important;
+      border-radius: 8px !important;
+      cursor: pointer !important;
+      font-size: 16px !important;
+      width: 100% !important;
+      margin: 10px 0 !important;
+      -webkit-tap-highlight-color: transparent !important;
+      touch-action: manipulation !important;
+    }
+
+    #random-video-btn:active {
+      background: rgba(255,255,255,0.3) !important;
+    }
+
+    @media (max-width: 768px) {
+      .scene {
+        z-index: 1;
+      }
+
+      #settings-panel {
+        bottom: 0;
+        right: 0;
+        left: 0;
+        width: 100%;
+        border-radius: 12px 12px 0 0;
+        padding: 20px;
+        max-height: 85vh;
+        touch-action: pan-y;
+        background: rgba(0, 0, 0, 0.95);
+        transform: translateY(100%);
+        overflow-y: scroll;
+        transition: transform 0.3s ease;
+      }
+
+      #settings-panel.visible {
+        transform: translateY(15%);
+      }
+
+      #settings-panel::after {
+        content: '';
+        display: block;
+        height: 40px;
+      }
+
+      #settings-panel h3 {
+        margin-bottom: 20px;
+      }
+
+      .setting-row {
+        margin: 20px 0;
+        padding: 10px 0;
+      }
+
+      .setting-row input[type="range"] {
+        margin: 15px 0;
+      }
+
+      .setting-row:last-child {
+        margin-bottom: 40px;
+        padding-bottom: 20px;
+      }
+
+      #settings-btn {
+        bottom: 20px;
+        right: 20px;
+        filter: drop-shadow(0 0 5px rgba(0,0,0,0.5));
+      }
+
+      .setting-row label {
+        font-size: 16px;
+      }
+    }
+
+    /* Prevent body scroll when panel is open */
+    body.panel-open {
+      overflow: hidden;
+      position: fixed;
+      width: 100%;
+      height: 100%;
+    }
   </style>
 </head>
 <body>
@@ -231,6 +326,9 @@
       <button id="random-video-btn" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: none; color: white; border-radius: 4px; cursor: pointer;">
         Load Random Video
       </button>
+      <a href="collection.html" id="collection-btn" style="display: inline-block; padding: 8px 16px; background: rgba(255,255,255,0.2); border: none; color: white; border-radius: 4px; cursor: pointer; text-decoration: none; margin-top: 10px;">
+        View Collection
+      </a>
     </div>
   </div>
 
@@ -247,5 +345,105 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="test-viewer.js"></script>
+  <script src="test-random-video-api.js"></script>
+  <script>
+  document.addEventListener('DOMContentLoaded', function() {
+    // Check for selected video from collection
+    const selectedVideo = sessionStorage.getItem('selectedVideo');
+    if (selectedVideo) {
+      const videoData = JSON.parse(selectedVideo);
+      const colorVideo = document.getElementById('colorVideo');
+      const depthVideo = document.getElementById('depthVideo');
+      
+      // Update video sources
+      colorVideo.src = videoData.originalVideo;
+      depthVideo.src = videoData.depthVideo;
+      
+      // Clear selection
+      sessionStorage.removeItem('selectedVideo');
+      
+      // Reload videos
+      colorVideo.load();
+      depthVideo.load();
+      
+      // Start playing when both videos are ready
+      Promise.all([
+        new Promise(resolve => colorVideo.addEventListener('canplay', resolve, {once: true})),
+        new Promise(resolve => depthVideo.addEventListener('canplay', resolve, {once: true}))
+      ]).then(() => {
+        colorVideo.play();
+        depthVideo.play();
+      });
+    }
+    
+    const settingsBtn = document.getElementById('settings-btn');
+    const settingsPanel = document.getElementById('settings-panel');
+    
+    // Debug logging function
+    function debugLog(message) {
+        console.log(`[Debug] ${message}`);
+    }
+
+    // Handle settings button click/touch
+    function toggleSettings(e) {
+        debugLog('Toggle settings called');
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const isVisible = settingsPanel.classList.contains('visible');
+        debugLog(`Panel is currently ${isVisible ? 'visible' : 'hidden'}`);
+        
+        if (isVisible) {
+            settingsPanel.classList.remove('visible');
+            document.body.classList.remove('panel-open');
+            debugLog('Panel hidden');
+        } else {
+            settingsPanel.classList.add('visible');
+            document.body.classList.add('panel-open');
+            debugLog('Panel shown');
+        }
+    }
+
+    // Add both click and touch events for better mobile support
+    settingsBtn.addEventListener('click', function(e) {
+        debugLog('Click event on settings button');
+        toggleSettings(e);
+    });
+
+    settingsBtn.addEventListener('touchstart', function(e) {
+        debugLog('Touch event on settings button');
+        toggleSettings(e);
+    });
+
+    // Prevent touch events from propagating through the panel
+    settingsPanel.addEventListener('touchstart', (e) => {
+        if (settingsPanel.classList.contains('visible')) {
+            debugLog('Panel touch event stopped');
+            e.stopPropagation();
+        }
+    }, { passive: true });
+
+    settingsPanel.addEventListener('touchmove', (e) => {
+        if (settingsPanel.classList.contains('visible')) {
+            debugLog('Panel move event stopped');
+            e.stopPropagation();
+        }
+    }, { passive: true });
+
+    // Close panel when clicking outside
+    document.addEventListener('click', (e) => {
+        if (settingsPanel.classList.contains('visible') && 
+            !settingsPanel.contains(e.target) && 
+            !settingsBtn.contains(e.target)) {
+            debugLog('Outside click - closing panel');
+            settingsPanel.classList.remove('visible');
+            document.body.classList.remove('panel-open');
+        }
+    });
+
+    // Log initial state
+    debugLog('Settings panel initialized');
+  });
+  </script>
 </body>
 </html>
