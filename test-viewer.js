@@ -30,19 +30,19 @@ const renderer = new THREE.WebGLRenderer({
 });
 
 // Add lights
-const pointLight = new THREE.PointLight(0xffffff, 1, 10);
+const pointLight = new THREE.PointLight(0xffffff, 2, 10);
 pointLight.position.set(0, 0, 1);
 scene.add(pointLight);
 
-const frontLight = new THREE.DirectionalLight(0xffffff, 0.8);
+const frontLight = new THREE.DirectionalLight(0xffffff, 1.2);
 frontLight.position.set(0, 0, 2);
 scene.add(frontLight);
 
-const topLight = new THREE.DirectionalLight(0xffffff, 0.5);
+const topLight = new THREE.DirectionalLight(0xffffff, 0.8);
 topLight.position.set(0, 2, 1);
 scene.add(topLight);
 
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambientLight);
 
 // Settings that can be adjusted
@@ -52,7 +52,8 @@ const settings = {
   depthContrast: 2.0,
   depthSmoothing: 0.5,  // New setting for depth smoothing
   rotationX: 0,
-  rotationY: 0
+  rotationY: 0,
+  objectPosition: new THREE.Vector3(0, 0, 0) // Add object position to settings
 };
 
 // Track video state
@@ -64,7 +65,7 @@ if (debug) {
 }
 
 // Add camera and touch state
-const initialCameraZ = -5;
+let initialCameraZ = -5;
 let currentCameraZ = -5;
 const MIN_CAMERA_Z = -8;
 const MAX_CAMERA_Z = -2;
@@ -98,7 +99,6 @@ function initOrUpdateMesh() {
   // High resolution mesh for detailed displacement
   const segmentsX = 512;
   const segmentsY = Math.floor(segmentsX / aspect);
-
   if (!geometry) {
     // Make the mesh larger to enhance the pop-out effect
     geometry = new THREE.PlaneGeometry(3 * aspect, 3, segmentsX - 1, segmentsY - 1);
@@ -116,7 +116,7 @@ function initOrUpdateMesh() {
     texture.generateMipmaps = false;
   }
 
-  // Enhanced shader material with clearcoat and proper displacement
+  // Optimized shader material
   if (!material) {
     material = new THREE.ShaderMaterial({
       uniforms: {
@@ -129,12 +129,7 @@ function initOrUpdateMesh() {
         time: { value: 0.0 },
         rotationX: { value: 0.0 },
         rotationY: { value: 0.0 },
-        clearcoatRoughness: { value: 0.1 },
-        clearcoatNormal: { value: 0.5 },
         objectPosition: { value: new THREE.Vector3(0, 0, 0) }
-      },
-      extensions: {
-        derivatives: true
       },
       vertexShader: `
         uniform sampler2D depthMap;
@@ -148,143 +143,101 @@ function initOrUpdateMesh() {
         varying vec2 vUv;
         varying vec3 vNormal;
         varying vec3 vViewPosition;
-        varying vec3 vWorldPosition;
         varying float vDepthValue;
 
-        float sampleDepthValue(vec2 uv) {
-          vec4 depthColor = texture2D(depthMap, uv);
-          return (depthColor.r + depthColor.g + depthColor.b) / 3.0;
-        }
-
         float getSmoothedDepth(vec2 uv) {
-          float center = sampleDepthValue(uv);
-
-          float pixelSize = 1.0 / 512.0;
-          float sum = center;
+          vec4 depthColor = texture2D(depthMap, uv);
+          float depth = (depthColor.r + depthColor.g + depthColor.b) / 3.0;
+          
+          // Simple 3x3 blur for smoothing
+          float pixelSize = 1.0 / 256.0;
+          float sum = depth;
           float weight = 1.0;
-
-          for(float x = -2.0; x <= 2.0; x++) {
-            for(float y = -2.0; y <= 2.0; y++) {
+          
+          for(float x = -1.0; x <= 1.0; x++) {
+            for(float y = -1.0; y <= 1.0; y++) {
               if(x == 0.0 && y == 0.0) continue;
-
-              vec2 offset = vec2(x, y) * pixelSize;
-              float sampleValue = sampleDepthValue(uv + offset);
-
-              float dist = length(vec2(x, y));
-              float sampleWeight = exp(-dist * (1.0 - depthSmoothing) * 0.5);
-
-              sum += sampleValue * sampleWeight;
-              weight += sampleWeight;
+              vec2 offset = vec2(x, y) * pixelSize * depthSmoothing;
+              vec4 sampleColor = texture2D(depthMap, uv + offset);
+              float sampleDepth = (sampleColor.r + sampleColor.g + sampleColor.b) / 3.0;
+              sum += sampleDepth;
+              weight += 1.0;
             }
           }
-
+          
           return sum / weight;
-        }
-
-        mat4 rotationMatrix(vec3 axis, float angle) {
-          axis = normalize(axis);
-          float s = sin(angle);
-          float c = cos(angle);
-          float oc = 1.0 - c;
-
-          return mat4(
-            oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,  0.0,
-            oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,  0.0,
-            oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c,           0.0,
-            0.0,                                 0.0,                                 0.0,                                 1.0
-          );
         }
 
         void main() {
           vUv = vec2(1.0 - uv.x, 1.0 - uv.y);
-
-          float rawDepth = getSmoothedDepth(vUv);
-          float depth = 1.0 - pow(rawDepth, depthContrast);
+          
+          float depth = getSmoothedDepth(vUv);
+          depth = 1.0 - pow(depth, depthContrast);
           vDepthValue = depth;
 
-          vec3 pos = position;
-          vec3 transformedNormal = normalize(normalMatrix * normal);
-
           // Apply displacement along normal
-          float displacement = depth * effectStrength;
-          pos += normal * displacement;
-
-          // Move pivot point to base of the depth
-          float baseOffset = 1.5 - effectStrength;
-          pos.y += baseOffset;
-
-          // Apply rotations around base point
-          mat4 rotX = rotationMatrix(vec3(1.0, 0.0, 0.0), rotationX);
-          mat4 rotY = rotationMatrix(vec3(0.0, 1.0, 0.0), rotationY);
-
-          vec4 centeredPos = vec4(pos, 1.0);
-          centeredPos = rotY * rotX * centeredPos;
-          pos = centeredPos.xyz;
-
-          // Move back and apply object translation
-          pos.y -= baseOffset;
+          vec3 pos = position + normal * (depth * effectStrength);
+          
+          // Apply rotations
+          float cosX = cos(rotationX);
+          float sinX = sin(rotationX);
+          float cosY = cos(rotationY);
+          float sinY = sin(rotationY);
+          
+          mat3 rotMatrix = mat3(
+            cosY, 0.0, -sinY,
+            sinX * sinY, cosX, sinX * cosY,
+            cosX * sinY, -sinX, cosX * cosY
+          );
+          
+          pos = rotMatrix * pos;
+          
+          // Apply translation from touch interaction
           pos += objectPosition;
-
+          
           vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
           gl_Position = projectionMatrix * mvPosition;
-
+          
           vViewPosition = -mvPosition.xyz;
-          vNormal = normalize(normalMatrix * mat3(rotY * rotX) * normal);
-          vWorldPosition = (modelMatrix * vec4(pos, 1.0)).xyz;
+          vNormal = normalize(normalMatrix * rotMatrix * normal);
         }
       `,
       fragmentShader: `
         uniform sampler2D colorMap;
         uniform float shineStrength;
-        uniform float clearcoatRoughness;
-        uniform float clearcoatNormal;
-
+        
         varying vec2 vUv;
         varying vec3 vNormal;
         varying vec3 vViewPosition;
-        varying vec3 vWorldPosition;
         varying float vDepthValue;
-
+        
         void main() {
           vec4 diffuseColor = texture2D(colorMap, vUv);
           vec3 normal = normalize(vNormal);
           vec3 viewDir = normalize(vViewPosition);
-
-          // Base layer lighting
-          vec3 lightPos = vec3(2.0, 2.0, 2.0);
-          vec3 lightDir = normalize(lightPos - vWorldPosition);
-          float diff = max(dot(normal, lightDir), 0.0);
-
-          // Specular
+          
+          // Basic lighting with increased intensity
+          vec3 lightDir = normalize(vec3(2.0, 2.0, 2.0));
+          float diff = max(dot(normal, lightDir), 0.0) * 1.2; // Increased diffuse intensity
+          
+          // Simple specular with increased intensity
           vec3 halfwayDir = normalize(lightDir + viewDir);
-          float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0) * shineStrength;
-
-          // Clearcoat layer
-          float clearcoatDiff = pow(1.0 - abs(dot(normal, viewDir)), 2.0);
-          vec3 clearcoatReflect = reflect(-viewDir, normal);
-          float clearcoatSpec = pow(max(dot(clearcoatReflect, lightDir), 0.0),
-                                  mix(16.0, 128.0, 1.0 - clearcoatRoughness));
-
-          // Fresnel
-          float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 3.0);
-
-          // Ambient occlusion from depth
-          float ao = 1.0 - (vDepthValue * 0.5);
-
-          // Combine all lighting components
-          vec3 ambient = vec3(0.2) * ao;
-          vec3 diffuse = vec3(0.7) * diff;
-          vec3 specular = vec3(0.3) * spec;
-          vec3 clearcoat = vec3(0.5) * clearcoatSpec * clearcoatDiff;
-          vec3 fresnelColor = vec3(0.2) * fresnel;
-
-          vec3 finalColor = (ambient + diffuse + specular + clearcoat + fresnelColor) * diffuseColor.rgb;
-
-          gl_FragColor = vec4(finalColor, diffuseColor.a);
+          float spec = pow(max(dot(normal, halfwayDir), 0.0), 16.0) * shineStrength * 1.5; // Increased specular intensity
+          
+          // Ambient occlusion with less darkening
+          float ao = mix(1.0, 0.7, vDepthValue); // Changed from 0.5 to 0.7 to reduce darkening
+          
+          // Final color with increased ambient light
+          vec3 lighting = vec3(0.3 * ao + 0.8 * diff + 0.4 * spec); // Increased ambient and diffuse components
+          gl_FragColor = vec4(diffuseColor.rgb * lighting, diffuseColor.a);
         }
       `,
       side: THREE.DoubleSide
     });
+  } else {
+    // Update existing material uniforms
+    material.uniforms.colorMap.value = colorTexture;
+    material.uniforms.depthMap.value = depthTexture;
   }
 
   if (!mesh) {
@@ -462,11 +415,11 @@ function init() {
       const deltaY = (currentCenter.y - lastTouchCenter.y) / window.innerHeight * TRANSLATION_SENSITIVITY;
 
       // Update object position with bounds
-      objectPosition.x = Math.max(-MAX_TRANSLATION, Math.min(MAX_TRANSLATION, objectPosition.x + deltaX));
-      objectPosition.y = Math.max(-MAX_TRANSLATION, Math.min(MAX_TRANSLATION, objectPosition.y + deltaY));
+      settings.objectPosition.x = Math.max(-MAX_TRANSLATION, Math.min(MAX_TRANSLATION, settings.objectPosition.x + deltaX));
+      settings.objectPosition.y = Math.max(-MAX_TRANSLATION, Math.min(MAX_TRANSLATION, settings.objectPosition.y + deltaY));
 
       if (material?.uniforms) {
-        material.uniforms.objectPosition.value.set(objectPosition.x, objectPosition.y, objectPosition.z);
+        material.uniforms.objectPosition.value.copy(settings.objectPosition);
       }
 
       // Store new center point
@@ -500,11 +453,10 @@ function init() {
     }
 
     if (!e.touches || e.touches.length === 0) {
-      // Keep the current tilt when touch ends (don't reset)
       initialPinchDistance = 0;
+      // Store current camera Z as initial for next pinch
+      initialCameraZ = currentCameraZ;
     } else if (e.touches.length === 1) {
-      // If we go from multi-touch to single touch, update the initial position
-      // to maintain the current tilt
       const touch = e.touches[0];
       initialTouchPosition = {
         x: touch.clientX,
@@ -656,9 +608,20 @@ function init() {
         })
       ]).then(() => {
         console.log('Both videos playing, initializing 3D');
-        // Ensure initial sync
+        // Initial sync
         depthVideo.currentTime = colorVideo.currentTime;
         console.log('Videos synced at time:', colorVideo.currentTime);
+
+        // Create or update mesh with lower resolution for better performance
+        if (!geometry) {
+          const videoWidth = colorVideo.videoWidth;
+          const videoHeight = colorVideo.videoHeight;
+          const aspect = videoWidth / videoHeight;
+          const segmentsX = 256; // Reduced from 512 for better performance
+          const segmentsY = Math.floor(segmentsX / aspect);
+          geometry = new THREE.PlaneGeometry(3 * aspect, 3, segmentsX - 1, segmentsY - 1);
+          geometry.computeVertexNormals();
+        }
 
         initOrUpdateMesh();
         updateDimensions();
@@ -708,8 +671,10 @@ function init() {
 function syncFrames() {
   // Check if videos are out of sync
   const drift = Math.abs(colorVideo.currentTime - depthVideo.currentTime);
-  if (drift > 0.01) { // More than 10ms drift
+  if (drift > 0.1) { // Increased threshold to reduce constant adjustments
+    // Only sync if drift is significant
     depthVideo.currentTime = colorVideo.currentTime;
+    console.log('Syncing videos, drift:', drift);
   }
   requestAnimationFrame(syncFrames);
 }
@@ -718,11 +683,12 @@ function syncFrames() {
 function animate() {
   requestAnimationFrame(animate);
 
-  // Ensure videos stay in sync
-  if (colorVideo.readyState >= 2 && depthVideo.readyState >= 2) {
+  // Only check sync in animation loop if videos are playing
+  if (isPlaying && colorVideo.readyState >= 2 && depthVideo.readyState >= 2) {
     const drift = Math.abs(colorVideo.currentTime - depthVideo.currentTime);
-    if (drift > 0.01) {
+    if (drift > 0.1) { // Increased threshold
       depthVideo.currentTime = colorVideo.currentTime;
+      console.log('Syncing in animation loop, drift:', drift);
     }
   }
 
@@ -734,8 +700,6 @@ function animate() {
     material.uniforms.depthSmoothing.value = settings.depthSmoothing;
     material.uniforms.time.value = performance.now() / 1000;
   }
-
-  // Debug info updates removed
 
   renderer.render(scene, camera);
 }
