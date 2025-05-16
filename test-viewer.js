@@ -30,19 +30,19 @@ const renderer = new THREE.WebGLRenderer({
 });
 
 // Add lights
-const pointLight = new THREE.PointLight(0xffffff, 2, 10);
+const pointLight = new THREE.PointLight(0xffffff, 3, 10);
 pointLight.position.set(0, 0, 1);
 scene.add(pointLight);
 
-const frontLight = new THREE.DirectionalLight(0xffffff, 1.2);
+const frontLight = new THREE.DirectionalLight(0xffffff, 1.5);
 frontLight.position.set(0, 0, 2);
 scene.add(frontLight);
 
-const topLight = new THREE.DirectionalLight(0xffffff, 0.8);
+const topLight = new THREE.DirectionalLight(0xffffff, 1.0);
 topLight.position.set(0, 2, 1);
 scene.add(topLight);
 
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
 scene.add(ambientLight);
 
 // Settings that can be adjusted
@@ -216,20 +216,43 @@ function initOrUpdateMesh() {
           vec3 normal = normalize(vNormal);
           vec3 viewDir = normalize(vViewPosition);
           
-          // Basic lighting with increased intensity
-          vec3 lightDir = normalize(vec3(2.0, 2.0, 2.0));
-          float diff = max(dot(normal, lightDir), 0.0) * 1.2; // Increased diffuse intensity
+          // Enhanced lighting with multiple light sources
+          vec3 lightDir1 = normalize(vec3(2.0, 2.0, 2.0));
+          vec3 lightDir2 = normalize(vec3(-2.0, 2.0, 2.0));
+          vec3 lightDir3 = normalize(vec3(0.0, -2.0, 2.0));
           
-          // Simple specular with increased intensity
-          vec3 halfwayDir = normalize(lightDir + viewDir);
-          float spec = pow(max(dot(normal, halfwayDir), 0.0), 16.0) * shineStrength * 1.5; // Increased specular intensity
+          // Calculate diffuse lighting from multiple sources
+          float diff1 = max(dot(normal, lightDir1), 0.0);
+          float diff2 = max(dot(normal, lightDir2), 0.0) * 0.7; // Secondary light is slightly dimmer
+          float diff3 = max(dot(normal, lightDir3), 0.0) * 0.5; // Third light is even dimmer
+          float totalDiff = (diff1 + diff2 + diff3) * 1.3; // Increased overall diffuse intensity
           
-          // Ambient occlusion with less darkening
-          float ao = mix(1.0, 0.7, vDepthValue); // Changed from 0.5 to 0.7 to reduce darkening
+          // Enhanced specular highlights
+          vec3 halfwayDir1 = normalize(lightDir1 + viewDir);
+          vec3 halfwayDir2 = normalize(lightDir2 + viewDir);
+          float spec1 = pow(max(dot(normal, halfwayDir1), 0.0), 32.0) * shineStrength * 2.0;
+          float spec2 = pow(max(dot(normal, halfwayDir2), 0.0), 32.0) * shineStrength * 1.5;
+          float totalSpec = spec1 + spec2;
           
-          // Final color with increased ambient light
-          vec3 lighting = vec3(0.3 * ao + 0.8 * diff + 0.4 * spec); // Increased ambient and diffuse components
-          gl_FragColor = vec4(diffuseColor.rgb * lighting, diffuseColor.a);
+          // Softer ambient occlusion
+          float ao = mix(1.0, 0.8, vDepthValue); // Reduced darkening in shadows
+          
+          // Enhanced rim lighting
+          float rimLight = pow(1.0 - max(dot(viewDir, normal), 0.0), 3.0) * 0.5;
+          
+          // Final color with increased ambient and better light balance
+          vec3 ambient = vec3(0.4 * ao); // Increased ambient light
+          vec3 diffuse = vec3(totalDiff);
+          vec3 specular = vec3(totalSpec);
+          vec3 rim = vec3(rimLight);
+          
+          vec3 lighting = ambient + diffuse + specular + rim;
+          vec3 finalColor = diffuseColor.rgb * lighting;
+          
+          // Slight gamma correction for better contrast
+          finalColor = pow(finalColor, vec3(0.95));
+          
+          gl_FragColor = vec4(finalColor, diffuseColor.a);
         }
       `,
       side: THREE.DoubleSide
